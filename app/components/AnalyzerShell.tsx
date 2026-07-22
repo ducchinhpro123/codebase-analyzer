@@ -1,11 +1,12 @@
 "use client";
 
-import { memo, useDeferredValue, useEffect, useMemo, useState } from "react";
+import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import {
   ArrowRight,
   ArrowUpRight,
+  ArrowsClockwise,
   BracketsCurly,
   CheckCircle,
   DownloadSimple,
@@ -21,6 +22,8 @@ import {
 } from "@phosphor-icons/react";
 import { demoReport } from "@/lib/demo";
 import { diagramToDrawio, diagramToSvg } from "@/lib/diagram-export";
+import { shouldStartGraphDrag } from "@/lib/graph-interaction";
+import { buildGraphLayout, GRAPH_EDGE_COLOR_COUNT, graphEdgeColorIndex, routeGraphEdge } from "@/lib/graph-layout";
 import { layoutDiagram, routeDiagramEdge, shouldRenderDiagramEdgeLabel } from "@/lib/diagram-layout";
 import { normalizeReportOverview } from "@/lib/project-overview";
 import type { AnalysisJob, AnalysisReport, AnalyzedModule, DependencyEdge, DiagramNode, ProjectOverview, RepositoryDiagram } from "@/lib/types";
@@ -68,42 +71,129 @@ type GraphCanvasProps = {
   compact?: boolean;
 };
 
+type GraphDragState = {
+  path: string;
+  pointerId: number;
+  pointerStartX: number;
+  pointerStartY: number;
+  originX: number;
+  originY: number;
+  moved: boolean;
+};
+
 const GraphCanvas = memo(function GraphCanvas({ modules, edges, selectedPath, onSelect, compact = false }: GraphCanvasProps) {
   const displayModules = useMemo(() => modules.slice(0, compact ? 6 : 30), [modules, compact]);
-  const columns = compact ? 2 : 3;
-  const nodeWidth = compact ? 166 : 178;
-  const nodeHeight = compact ? 64 : 70;
-  const columnGap = compact ? 210 : 236;
-  const rowGap = compact ? 98 : 112;
-  const positions = useMemo(() => displayModules.map((module, index) => ({ module, x: 38 + (index % columns) * columnGap, y: 44 + Math.floor(index / columns) * rowGap })), [displayModules, columns, columnGap, rowGap]);
-  const coords = useMemo(() => new Map(positions.map(({ module, x, y }) => [module.path, { x, y }])), [positions]);
   const modulePaths = useMemo(() => new Set(modules.map((module) => module.path)), [modules]);
-  const rows = Math.max(1, Math.ceil(displayModules.length / columns));
-  const width = compact ? 458 : 760;
-  const height = 70 + rows * rowGap;
+  const connections = useMemo(() => {
+    const seen = new Set<string>();
+    return edges.map((edge) => ({ source: edge.source, target: graphTarget(edge, modulePaths) })).filter((edge) => {
+      if (!modulePaths.has(edge.source) || !modulePaths.has(edge.target)) return false;
+      const key = `${edge.source}\u0000${edge.target}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  }, [edges, modulePaths]);
+  const autoLayout = useMemo(() => buildGraphLayout({ nodes: displayModules.map((module) => ({ path: module.path })), connections, compact }), [displayModules, connections, compact]);
+  const [positions, setPositions] = useState(autoLayout.nodes);
+  const [draggingPath, setDraggingPath] = useState<string>();
+  const svgRef = useRef<SVGSVGElement>(null);
+  const dragRef = useRef<GraphDragState>();
+  const suppressClickRef = useRef<string>();
+  const moduleByPath = useMemo(() => new Map(displayModules.map((module) => [module.path, module])), [displayModules]);
+  const positionByPath = useMemo(() => new Map(positions.map((node) => [node.path, node])), [positions]);
+  const arrowId = `graph-arrow-${compact ? "compact" : "full"}`;
+
+  useEffect(() => {
+    dragRef.current = undefined;
+    setPositions(autoLayout.nodes);
+    setDraggingPath(undefined);
+  }, [autoLayout]);
 
   if (!displayModules.length) return <div className="graph-empty"><Graph size={28} aria-hidden /><p>No modules match this view.</p></div>;
 
+  function pointerPoint(event: React.PointerEvent<SVGSVGElement>) {
+    const rect = svgRef.current?.getBoundingClientRect();
+    if (!rect) return { x: 0, y: 0 };
+    return { x: (event.clientX - rect.left) * autoLayout.width / rect.width, y: (event.clientY - rect.top) * autoLayout.height / rect.height };
+  }
+
+  function startDrag(event: React.PointerEvent<SVGGElement>, node: typeof positions[number]) {
+    if (compact || event.button !== 0) return;
+    event.preventDefault();
+    event.stopPropagation();
+    const point = pointerPoint(event as unknown as React.PointerEvent<SVGSVGElement>);
+    dragRef.current = { path: node.path, pointerId: event.pointerId, pointerStartX: point.x, pointerStartY: point.y, originX: node.x, originY: node.y, moved: false };
+    svgRef.current?.setPointerCapture(event.pointerId);
+  }
+
+  function moveDrag(event: React.PointerEvent<SVGSVGElement>) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    const point = pointerPoint(event);
+    const deltaX = point.x - drag.pointerStartX;
+    const deltaY = point.y - drag.pointerStartY;
+    if (!drag.moved && !shouldStartGraphDrag(deltaX, deltaY)) return;
+    if (!drag.moved) {
+      drag.moved = true;
+      setDraggingPath(drag.path);
+    }
+    setPositions((current) => current.map((node) => node.path === drag.path ? { ...node, x: Math.max(8, Math.min(autoLayout.width - node.width - 8, drag.originX + deltaX)), y: Math.max(8, Math.min(autoLayout.height - node.height - 8, drag.originY + deltaY)) } : node));
+  }
+
+  function finishDrag(event: React.PointerEvent<SVGSVGElement>, cancelled: boolean) {
+    const drag = dragRef.current;
+    if (!drag || drag.pointerId !== event.pointerId) return;
+    suppressClickRef.current = drag.path;
+    window.setTimeout(() => {
+      if (suppressClickRef.current === drag.path) suppressClickRef.current = undefined;
+    }, 0);
+    if (!cancelled && !drag.moved) {
+      const module = moduleByPath.get(drag.path);
+      if (module) onSelect(module);
+    }
+    dragRef.current = undefined;
+    setDraggingPath(undefined);
+    if (svgRef.current?.hasPointerCapture(event.pointerId)) svgRef.current.releasePointerCapture(event.pointerId);
+  }
+
+  function endDrag(event: React.PointerEvent<SVGSVGElement>) {
+    finishDrag(event, false);
+  }
+
+  function cancelDrag(event: React.PointerEvent<SVGSVGElement>) {
+    finishDrag(event, true);
+  }
+
+  function selectNode(module: AnalyzedModule) {
+    if (suppressClickRef.current === module.path) {
+      suppressClickRef.current = undefined;
+      return;
+    }
+    onSelect(module);
+  }
+
   return <div className={`graph-canvas ${compact ? "graph-canvas-compact" : ""}`}>
-    <svg viewBox={`0 0 ${width} ${height}`} role="img" aria-label="Repository dependency graph">
-      {edges.map((edge, index) => {
-        const from = coords.get(edge.source);
-        const to = coords.get(graphTarget(edge, modulePaths));
+    {!compact ? <div className="graph-toolbar"><span>Drag nodes to explore the dependency graph.</span><button type="button" className="quiet-action" onClick={() => setPositions(autoLayout.nodes)}><ArrowsClockwise size={15} aria-hidden />Auto arrange</button></div> : null}
+    <svg ref={svgRef} viewBox={`0 0 ${autoLayout.width} ${autoLayout.height}`} role="img" aria-label="Repository dependency graph" onPointerMove={moveDrag} onPointerUp={endDrag} onPointerCancel={cancelDrag}>
+      <defs>{Array.from({ length: GRAPH_EDGE_COLOR_COUNT }, (_, colorIndex) => <marker key={colorIndex} id={`${arrowId}-${colorIndex}`} markerWidth="7" markerHeight="7" refX="6" refY="3.5" orient="auto"><path d="M0,0 L7,3.5 L0,7 z" className={`graph-edge-color-${colorIndex}`} fill="currentColor" /></marker>)}</defs>
+      {connections.map((connection, index) => {
+        const from = positionByPath.get(connection.source);
+        const to = positionByPath.get(connection.target);
         if (!from || !to) return null;
-        const startX = from.x + nodeWidth / 2;
-        const startY = from.y + nodeHeight / 2;
-        const endX = to.x + nodeWidth / 2;
-        const endY = to.y + nodeHeight / 2;
-        return <path key={`${edge.source}-${edge.target}-${index}`} d={`M ${startX} ${startY} C ${startX} ${endY}, ${endX} ${startY}, ${endX} ${endY}`} className="graph-edge" />;
+        const colorIndex = graphEdgeColorIndex(connection.source);
+        return <path key={`${connection.source}-${connection.target}-${index}`} d={routeGraphEdge(from, to, index, autoLayout.width).path} className={`graph-edge graph-edge-color-${colorIndex}`} markerEnd={`url(#${arrowId}-${colorIndex})`} />;
       })}
-      {positions.map(({ module, x, y }) => {
+      {positions.map((node) => {
+        const module = moduleByPath.get(node.path);
+        if (!module) return null;
         const isSelected = module.path === selectedPath;
         const isHot = module.metric.hotspotScore >= 70;
-        return <g key={module.path} className={`graph-node ${isSelected ? "is-selected" : ""} ${isHot ? "is-hot" : ""}`} role="button" tabIndex={0} aria-label={`Inspect ${module.path}`} onClick={() => onSelect(module)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") onSelect(module); }}>
-          <rect x={x} y={y} width={nodeWidth} height={nodeHeight} rx="9" />
-          <text x={x + 14} y={y + 25} className="graph-node-name">{fileName(module.path).slice(0, 22)}</text>
-          <text x={x + 14} y={y + 48} className="graph-node-meta">{module.cluster} / score {module.metric.hotspotScore}</text>
-          <circle cx={x + nodeWidth - 15} cy={y + 17} r="4" />
+        return <g key={module.path} className={`graph-node ${isSelected ? "is-selected" : ""} ${isHot ? "is-hot" : ""} ${draggingPath === node.path ? "is-dragging" : ""}`} role="button" tabIndex={0} aria-grabbed={draggingPath === node.path} aria-label={`Inspect ${module.path}. Drag to reposition.`} onPointerDown={(event) => startDrag(event, node)} onClick={() => selectNode(module)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") selectNode(module); }}>
+          <rect x={node.x} y={node.y} width={node.width} height={node.height} rx="9" />
+          <text x={node.x + 14} y={node.y + 25} className="graph-node-name">{fileName(module.path).slice(0, 22)}</text>
+          <text x={node.x + 14} y={node.y + 48} className="graph-node-meta">{module.cluster} / score {module.metric.hotspotScore}</text>
+          <circle cx={node.x + node.width - 15} cy={node.y + 17} r="4" />
         </g>;
       })}
     </svg>

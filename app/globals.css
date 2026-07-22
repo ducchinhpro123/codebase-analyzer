@@ -13,6 +13,14 @@
   --accent-hover: #a93421;
   --accent-foreground: #f8f8f6;
   --accent-soft: #f9e8e3;
+  --graph-edge-0: #4b6f91;
+  --graph-edge-1: #397b72;
+  --graph-edge-2: #79658e;
+  --graph-edge-3: #a05d43;
+  --graph-edge-4: #5d7d48;
+  --graph-edge-5: #946072;
+  --graph-edge-6: #3f7887;
+  --graph-edge-7: #8c713a;
   --shadow: 0 24px 70px rgba(38, 47, 54, .12);
   --radius: 12px;
 }
@@ -32,6 +40,14 @@
     --accent-hover: #ff8b73;
     --accent-foreground: #171a1c;
     --accent-soft: #34221f;
+    --graph-edge-0: #79a9d2;
+    --graph-edge-1: #6eb7a7;
+    --graph-edge-2: #ad91d1;
+    --graph-edge-3: #df9574;
+    --graph-edge-4: #94bd75;
+    --graph-edge-5: #d78da5;
+    --graph-edge-6: #76b9c8;
+    --graph-edge-7: #d1b06c;
     --shadow: 0 28px 80px rgba(4, 6, 7, .38);
   }
 }
@@ -122,13 +138,27 @@ code { font-family: var(--font-geist-mono), monospace; }
 
 /* Shared dependency graph */
 .graph-canvas { position: relative; overflow: auto; max-height: 680px; background: var(--surface); scrollbar-color: var(--line-strong) transparent; }
-.graph-canvas svg { display: block; width: 100%; min-width: 680px; height: auto; }
+.graph-toolbar { display: flex; min-height: 42px; align-items: center; justify-content: space-between; gap: 16px; padding: 0 14px; border-bottom: 1px solid var(--line); color: var(--faint); font: 10px var(--font-geist-mono), monospace; }
+.graph-toolbar .quiet-action { min-height: 30px; padding: 0 9px; font-size: 10px; }
+.graph-toolbar .quiet-action > svg { width: 15px; height: 15px; min-width: 15px; flex: 0 0 15px; }
+.graph-canvas > svg { display: block; width: 100%; min-width: 760px; height: auto; touch-action: none; }
 .graph-canvas-compact { max-height: 430px; }
-.graph-canvas-compact svg { min-width: 458px; }
-.graph-edge { fill: none; stroke: var(--line-strong); stroke-width: 1.25; vector-effect: non-scaling-stroke; }
-.graph-node { cursor: pointer; outline: none; }
+.graph-canvas-compact > svg { min-width: 458px; }
+.graph-edge { fill: none; stroke: currentColor; stroke-width: 1.35; opacity: .76; vector-effect: non-scaling-stroke; transition: opacity .16s ease, stroke-width .16s ease; }
+.graph-edge:hover { stroke-width: 2; opacity: 1; }
+.graph-edge-color-0 { color: var(--graph-edge-0); }
+.graph-edge-color-1 { color: var(--graph-edge-1); }
+.graph-edge-color-2 { color: var(--graph-edge-2); }
+.graph-edge-color-3 { color: var(--graph-edge-3); }
+.graph-edge-color-4 { color: var(--graph-edge-4); }
+.graph-edge-color-5 { color: var(--graph-edge-5); }
+.graph-edge-color-6 { color: var(--graph-edge-6); }
+.graph-edge-color-7 { color: var(--graph-edge-7); }
+.graph-node { cursor: grab; outline: none; user-select: none; }
+.graph-node.is-dragging { cursor: grabbing; }
 .graph-node rect { fill: var(--surface-raised); stroke: var(--line-strong); stroke-width: 1; transition: fill .18s ease, stroke .18s ease, transform .18s ease; transform-box: fill-box; transform-origin: center; }
 .graph-node:hover rect, .graph-node:focus-visible rect { fill: var(--surface-muted); stroke: var(--ink); transform: translateY(-2px); }
+.graph-node.is-dragging rect { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.5; transform: translateY(-2px); }
 .graph-node.is-selected rect { fill: var(--accent-soft); stroke: var(--accent); stroke-width: 1.5; }
 .graph-node circle { fill: transparent; }
 .graph-node.is-hot circle { fill: var(--accent); }
