@@ -1,0 +1,69 @@
+services:
+  web:
+    build: .
+    ports:
+      - "3000:3000"
+    environment:
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.xah.io/v1}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-v4-flash}
+      LLM_CONCURRENCY: ${LLM_CONCURRENCY:-4}
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgresql://analyzer:analyzer@postgres:5432/analyzer
+      STORE_FILE: /app/data/store.json
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./data:/app/data
+
+  worker:
+    build: .
+    command: npm run worker
+    environment:
+      LLM_API_KEY: ${LLM_API_KEY:-}
+      LLM_BASE_URL: ${LLM_BASE_URL:-https://api.xah.io/v1}
+      LLM_MODEL: ${LLM_MODEL:-deepseek-v4-flash}
+      LLM_CONCURRENCY: ${LLM_CONCURRENCY:-4}
+      REDIS_URL: redis://redis:6379
+      DATABASE_URL: postgresql://analyzer:analyzer@postgres:5432/analyzer
+      STORE_FILE: /app/data/store.json
+      WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-2}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./data:/app/data
+
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: analyzer
+      POSTGRES_PASSWORD: analyzer
+      POSTGRES_DB: analyzer
+    volumes:
+      - analyzer-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U analyzer -d analyzer"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    volumes:
+      - analyzer-redis:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  analyzer-postgres:
+  analyzer-redis:
