@@ -51,7 +51,7 @@ export const repositoryDiagramSchema = z.object({
   nodes: z.array(z.object({
     id: z.string().min(1).max(80),
     label: z.string().min(1).max(100),
-    kind: z.enum(["actor", "service", "worker", "store", "artifact", "transform", "boundary"]),
+    kind: z.enum(["actor", "service", "worker", "store", "artifact", "transform", "boundary", "container", "queue", "external-system"]),
     description: z.string().min(1).max(360),
     modulePaths: z.array(z.string()).max(12).default([]),
     evidence: z.array(diagramEvidenceSchema).max(6).default([]),
@@ -68,6 +68,51 @@ export const repositoryDiagramSchema = z.object({
     provenance: z.enum(["observed", "inferred"]).default("inferred"),
     confidence: z.enum(["low", "medium", "high"]).default("medium")
   })).max(36),
+  generatedBy: z.enum(["deepseek-v4-flash", "deterministic-fallback"]).default("deterministic-fallback"),
+  confidence: z.enum(["low", "medium", "high"]).default("medium")
+});
+
+const systemDesignEvidenceSchema = z.object({
+  filePath: z.string(),
+  startLine: z.number().int().positive(),
+  endLine: z.number().int().positive(),
+  reason: z.string()
+});
+
+export const repositorySystemDesignSchema = z.object({
+  description: z.string().min(1).max(600),
+  boundaries: z.array(z.object({
+    id: z.string().min(1).max(80),
+    label: z.string().min(1).max(100),
+    description: z.string().min(1).max(360),
+    kind: z.enum(["system", "external"]),
+    evidence: z.array(systemDesignEvidenceSchema).max(6).default([]),
+    provenance: z.enum(["observed", "inferred"]).default("inferred"),
+    confidence: z.enum(["low", "medium", "high"]).default("medium")
+  })).min(1).max(8),
+  nodes: z.array(z.object({
+    id: z.string().min(1).max(80),
+    label: z.string().min(1).max(100),
+    kind: z.enum(["actor", "container", "worker", "store", "queue", "external-system"]),
+    description: z.string().min(1).max(360),
+    technology: z.string().max(120).optional(),
+    boundaryId: z.string().min(1).max(80),
+    modulePaths: z.array(z.string()).max(12).default([]),
+    evidence: z.array(systemDesignEvidenceSchema).max(6).default([]),
+    provenance: z.enum(["observed", "inferred"]).default("inferred"),
+    confidence: z.enum(["low", "medium", "high"]).default("medium")
+  })).min(2).max(20),
+  relationships: z.array(z.object({
+    id: z.string().min(1).max(100),
+    source: z.string(),
+    target: z.string(),
+    kind: z.enum(["calls", "publishes", "reads", "writes", "depends-on"]),
+    label: z.string().min(1).max(100),
+    protocol: z.string().max(80).optional(),
+    evidence: z.array(systemDesignEvidenceSchema).max(6).default([]),
+    provenance: z.enum(["observed", "inferred"]).default("inferred"),
+    confidence: z.enum(["low", "medium", "high"]).default("medium")
+  })).max(40),
   generatedBy: z.enum(["deepseek-v4-flash", "deterministic-fallback"]).default("deterministic-fallback"),
   confidence: z.enum(["low", "medium", "high"]).default("medium")
 });

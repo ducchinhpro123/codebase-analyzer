@@ -31,12 +31,12 @@ export function buildGraphLayout(input: {
 }): GraphLayout {
   const compact = Boolean(input.compact);
   const columns = compact ? 2 : 4;
-  const nodeWidth = compact ? 166 : 178;
-  const nodeHeight = compact ? 64 : 70;
-  const columnGap = compact ? 44 : 58;
-  const rowGap = compact ? 34 : 42;
-  const paddingX = 38;
-  const paddingY = 44;
+  const nodeWidth = compact ? 150 : 178;
+  const nodeHeight = compact ? 52 : 70;
+  const columnGap = compact ? 64 : 58;
+  const rowGap = compact ? 38 : 42;
+  const paddingX = compact ? 56 : 38;
+  const paddingY = compact ? 40 : 44;
   const originalOrder = new Map(input.nodes.map((node, index) => [node.path, index]));
   const known = new Set(input.nodes.map((node) => node.path));
   const outgoing = new Map(input.nodes.map((node) => [node.path, new Set<string>()]));

@@ -27,7 +27,30 @@ test("legacy reports receive a big-picture flow before they are rendered", () =>
   assert.ok(normalized.overview);
   assert.ok(normalized.overview.flow.length >= 2);
   assert.ok(normalized.diagram);
+  assert.ok(normalized.systemDesign);
   assert.equal(normalized.modules, legacyReport.modules);
+});
+
+test("persisted file-level system designs are rebuilt as logical containers", () => {
+  const fileLevelDesign = {
+    ...demoReport.systemDesign!,
+    nodes: demoReport.modules.map((module) => ({
+      id: `file-${module.id}`,
+      label: module.path.split("/").at(-1)!,
+      kind: "container" as const,
+      description: module.summary.purpose,
+      boundaryId: "system",
+      modulePaths: [module.path],
+      evidence: module.summary.evidence ?? [],
+      provenance: "observed" as const,
+      confidence: "medium" as const
+    })),
+    relationships: []
+  };
+  const normalized = normalizeReportOverview({ ...demoReport, systemDesign: fileLevelDesign });
+
+  assert.ok(normalized.systemDesign!.nodes.length < fileLevelDesign.nodes.length);
+  assert.ok(normalized.systemDesign!.nodes.every((node) => !/\.(?:py|tsx?)$/i.test(node.label)));
 });
 
 test("builds an exportable semantic diagram with traceable module links", () => {

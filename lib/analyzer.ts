@@ -8,7 +8,8 @@ import OpenAI from "openai";
 import { parseJavaScriptImports } from "./ast";
 import { mapWithConcurrency } from "./concurrency";
 import { buildFallbackProjectOverview, buildFallbackRepositoryDiagram } from "./project-overview";
-import { llmSummarySchema, projectOverviewSchema, repositoryDiagramSchema } from "./validation";
+import { buildFallbackSystemDesign, normalizeSystemDesign, type ArchitectureContextFile } from "./system-design";
+import { llmSummarySchema, projectOverviewSchema, repositoryDiagramSchema, repositorySystemDesignSchema } from "./validation";
 import type {
   AnalysisReport,
   AnalysisStage,
@@ -18,7 +19,8 @@ import type {
   ModuleMetric,
   ModuleSummary,
   ProjectOverview,
-  RepositoryDiagram
+  RepositoryDiagram,
+  RepositorySystemDesign
 } from "./types";
 
 const execFileAsync = promisify(execFile);
@@ -29,7 +31,7 @@ const MAX_BYTES = Number(process.env.ANALYZER_MAX_BYTES ?? 100 * 1024 * 1024);
 
 type Progress = (stage: AnalysisStage, progress: number, message: string) => void;
 type IndexedFile = { path: string; language: Language; source: string; lines: number };
-type ProjectContextFile = { path: string; source: string; lines: number };
+type ProjectContextFile = ArchitectureContextFile;
 
 function languageFor(filePath: string): Language {
   const extension = path.extname(filePath).toLowerCase();
@@ -69,9 +71,13 @@ async function listSourceFiles(root: string): Promise<IndexedFile[]> {
 async function readProjectContext(root: string): Promise<ProjectContextFile[]> {
   const rootEntries = await fs.readdir(root, { withFileTypes: true });
   const names = rootEntries
-    .filter((entry) => entry.isFile() && (/^readme(?:\.[^.]+)?$/i.test(entry.name) || /^(package\.json|pyproject\.toml|cargo\.toml|go\.mod)$/i.test(entry.name)))
+    .filter((entry) => entry.isFile() && (
+      /^readme(?:\.[^.]+)?$/i.test(entry.name)
+      || /^(package\.json|pyproject\.toml|cargo\.toml|go\.mod|requirements(?:\.[^.]+)?|procfile|dockerfile|docker-compose(?:\.[^.]+)?|compose(?:\.[^.]+)?|next\.config\.[^.]+|vite\.config\.[^.]+|tsconfig\.json)$/i.test(entry.name)
+      || /^\.env\.example$/i.test(entry.name)
+    ))
     .map((entry) => entry.name)
-    .slice(0, 4);
+    .slice(0, 12);
   const context: ProjectContextFile[] = [];
   for (const name of names) {
     const filePath = path.join(root, name);
@@ -338,6 +344,81 @@ async function summarizeDiagramWithLlm(input: {
   }
 }
 
+async function summarizeSystemDesignWithLlm(input: {
+  repositoryName: string;
+  modules: AnalyzedModule[];
+  edges: DependencyEdge[];
+  sourceFiles: IndexedFile[];
+  contextFiles: ProjectContextFile[];
+}): Promise<RepositorySystemDesign> {
+  const fallback = buildFallbackSystemDesign({
+    repositoryName: input.repositoryName,
+    modules: input.modules,
+    edges: input.edges,
+    contextFiles: input.contextFiles
+  });
+  const apiKey = process.env.LLM_API_KEY ?? process.env.CKEY_API_KEY;
+  if (!apiKey) return fallback;
+
+  try {
+    const knownModulePaths = new Set(input.modules.map((module) => module.path));
+    const evidenceSources = new Map([
+      ...input.sourceFiles.map((file) => [file.path, file.lines] as const),
+      ...input.contextFiles.map((file) => [file.path, file.lines] as const)
+    ]);
+    const importantModules = [...input.modules]
+      .sort((a, b) => (b.metric.fanIn + b.metric.fanOut + b.metric.hotspotScore / 20) - (a.metric.fanIn + a.metric.fanOut + a.metric.hotspotScore / 20))
+      .slice(0, 100);
+    const internalEdges = input.edges.filter((edge) => knownModulePaths.has(edge.source)).slice(0, 280);
+    const client = new OpenAI({ apiKey, baseURL: process.env.LLM_BASE_URL ?? process.env.CKEY_BASE_URL ?? "https://api.xah.io/v1" });
+    const response = await client.chat.completions.create({
+      model: process.env.LLM_MODEL ?? "deepseek-v4-flash",
+      temperature: 0.1,
+      response_format: { type: "json_object" },
+      messages: [
+        {
+          role: "system",
+          content: "You are a careful software architect. Return only valid JSON matching the requested shape. Build a logical C4-style container view of the analyzed repository. Use only supplied source, module summaries, dependency edges, manifests, and architecture configuration. Never invent runtime behavior, deployment details, databases, queues, or external systems. Mark indirect interpretations as inferred."
+        },
+        {
+          role: "user",
+          content: JSON.stringify({
+            task: "Describe the repository's system design: logical containers, workers, stores, queues, actors, external systems, boundaries, and the relationships between them.",
+            shape: {
+              description: "one sentence explaining the logical system-design view",
+              boundaries: [{ id: "system", label: "Analyzed system", description: "boundary description", kind: "system | external", evidence: [{ filePath: "exact path", startLine: "number", endLine: "number", reason: "support" }], provenance: "observed | inferred", confidence: "low | medium | high" }],
+              nodes: [{ id: "stable-slug", label: "short element name", kind: "actor | container | worker | store | queue | external-system", description: "responsibility", technology: "optional technology", boundaryId: "known boundary id", modulePaths: ["exact supplied module path"], evidence: [{ filePath: "exact path", startLine: "number", endLine: "number", reason: "support" }], provenance: "observed | inferred", confidence: "low | medium | high" }],
+              relationships: [{ id: "source-to-target", source: "node id", target: "node id", kind: "calls | publishes | reads | writes | depends-on", label: "short verb phrase", protocol: "optional protocol", evidence: [{ filePath: "exact path", startLine: "number", endLine: "number", reason: "support" }], provenance: "observed | inferred", confidence: "low | medium | high" }],
+              generatedBy: "deepseek-v4-flash",
+              confidence: "low | medium | high"
+            },
+            repositoryName: input.repositoryName,
+            contextFiles: input.contextFiles.map((file) => ({ path: file.path, content: file.source })),
+            modules: importantModules.map((module) => ({
+              path: module.path,
+              cluster: module.cluster,
+              purpose: module.summary.purpose,
+              responsibilities: module.summary.responsibilities.slice(0, 4),
+              dependencies: module.summary.dependencies.slice(0, 8),
+              metrics: module.metric,
+              evidence: module.summary.evidence?.slice(0, 2) ?? []
+            })),
+            edges: internalEdges
+          })
+        }
+      ]
+    });
+    const raw = response.choices[0]?.message?.content;
+    if (!raw) return fallback;
+    const parsed = repositorySystemDesignSchema.parse(JSON.parse(raw)) as RepositorySystemDesign;
+    const normalized = normalizeSystemDesign(parsed, knownModulePaths, evidenceSources);
+    if (normalized.boundaries.length < 1 || normalized.nodes.length < 2) return fallback;
+    return { ...normalized, generatedBy: "deepseek-v4-flash" };
+  } catch {
+    return fallback;
+  }
+}
+
 export async function analyzeRepository(input: { repositoryUrl: string; id: string }, onProgress: Progress): Promise<AnalysisReport> {
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "codebase-analyzer-"));
   try {
@@ -405,6 +486,8 @@ export async function analyzeRepository(input: { repositoryUrl: string; id: stri
     const overview = await summarizeProjectWithLlm({ repositoryName, languages, modules, edges: rawEdges, sourceFiles: files, contextFiles: projectContext });
     onProgress("summarizing", 97, "Mapping semantic architecture nodes");
     const diagram = await summarizeDiagramWithLlm({ modules, edges: rawEdges, sourceFiles: files, contextFiles: projectContext });
+    onProgress("summarizing", 98, "Synthesizing system design architecture");
+    const systemDesign = await summarizeSystemDesignWithLlm({ repositoryName, modules, edges: rawEdges, sourceFiles: files, contextFiles: projectContext });
 
     const report: AnalysisReport = {
       id: input.id,
@@ -420,7 +503,8 @@ export async function analyzeRepository(input: { repositoryUrl: string; id: stri
       edges: rawEdges,
       clusters: [...new Set(modules.map((module) => module.cluster))],
       overview,
-      diagram
+      diagram,
+      systemDesign
     };
     onProgress("completed", 100, "Report ready");
     return report;

@@ -16,5 +16,7 @@ test("report API returns an overview and executable flow", async () => {
   assert.equal(typeof report.overview.summary, "string");
   assert.ok(report.overview.flow.length >= 2);
   assert.ok(report.diagram.nodes.length >= 2);
+  assert.ok(report.systemDesign.nodes.length >= 2);
+  assert.ok(report.systemDesign.boundaries.length >= 1);
   assert.ok(report.overview.flow.every((step: { modulePaths: string[] }) => step.modulePaths.every((path) => report.modules.some((module: { path: string }) => module.path === path))));
 });

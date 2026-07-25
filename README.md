@@ -4,8 +4,8 @@
 
 Tracepath turns a public GitHub repository into an evidence-backed architecture
 report. It builds an interactive dependency map, identifies deterministic
-complexity hotspots, explains modules in plain language, and exports a
-high-level data-flow diagram.
+complexity hotspots, explains modules in plain language, and exports both a
+high-level data-flow diagram and a C4-style system-design view.
 
 Unlike a generic “chat with your repository” demo, Tracepath keeps every
 architectural claim connected to observed source files and labels inferred
@@ -15,10 +15,11 @@ relationships explicitly.
 
 - A repository overview with capabilities, architecture flow, and review risks
 - An interactive module graph built from parsed imports
+- A Mermaid-rendered system-design architecture showing logical containers, workers, stores, queues, and external systems
 - Hotspots ranked by complexity, coupling, and module size
 - Evidence anchors linking summaries back to source locations
 - Observed versus inferred relationships with confidence signals
-- SVG, PNG, and Draw.io architecture-diagram exports
+- SVG, PNG, and Draw.io exports for both architecture views
 - Shareable, unlisted report URLs
 - Live analysis progress over server-sent events
 
@@ -105,7 +106,8 @@ Next.js API ───────► job store ───────► BullMQ /
 | `worker/index.ts` | BullMQ worker entry point |
 | `app/api` | Job creation, status, SSE progress, and report retrieval |
 | `app/components/AnalyzerShell.tsx` | Landing flow, analysis progress, diagram, module explorer, and evidence UI |
-| `lib/diagram-export.ts` | Deterministic SVG, PNG-source, and Draw.io export generation |
+| `lib/diagram-export.ts` | Deterministic SVG, PNG-source, and Draw.io export generation for both architecture views |
+| `lib/system-design.ts` | Evidence-backed C4 container synthesis and legacy-report normalization |
 
 Architectural choices are recorded in [`docs/adr`](docs/adr), including why
 overview claims require evidence and why inferred diagram edges remain
@@ -141,6 +143,7 @@ and GitHub URL normalization.
 
 - Only public GitHub repositories are accepted.
 - Static relationships are architectural evidence, not proof of runtime order.
+- System-design containers and integrations are logical, evidence-backed interpretations; they are not a deployment topology or runtime trace.
 - Language coverage currently focuses on JavaScript, TypeScript, and Python.
 - The default Compose credentials are for local development and must be
   replaced before any public deployment.

@@ -1,4 +1,5 @@
 import type { AnalysisReport, AnalyzedModule, DependencyEdge, DiagramNode, DiagramNodeKind, DiagramRelationship, Evidence, Language, ProjectFlowStep, ProjectOverview, RepositoryDiagram } from "./types";
+import { buildFallbackSystemDesign, isFileLevelSystemDesign } from "./system-design";
 
 type OverviewInput = {
   repositoryName: string;
@@ -132,10 +133,14 @@ export function buildFallbackProjectOverview({ repositoryName, languages, module
 }
 
 export function normalizeReportOverview(report: AnalysisReport): AnalysisReport {
-  if (report.overview && report.diagram) return report;
+  const systemDesign = report.systemDesign && !isFileLevelSystemDesign(report.systemDesign)
+    ? report.systemDesign
+    : buildFallbackSystemDesign({ repositoryName: report.repositoryName, modules: report.modules, edges: report.edges });
+  if (report.overview && report.diagram && systemDesign === report.systemDesign) return report;
   return {
     ...report,
     overview: report.overview ?? buildFallbackProjectOverview({ repositoryName: report.repositoryName, languages: report.languages, modules: report.modules }),
-    diagram: report.diagram ?? buildFallbackRepositoryDiagram({ modules: report.modules, edges: report.edges })
+    diagram: report.diagram ?? buildFallbackRepositoryDiagram({ modules: report.modules, edges: report.edges }),
+    systemDesign
   };
 }

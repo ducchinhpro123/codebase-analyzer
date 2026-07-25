@@ -19,6 +19,18 @@ test("graph layout assigns dependency depth to columns without node overlap", ()
   assert.ok(layout.nodes.every((node) => node.x >= 0 && node.y >= 0));
 });
 
+test("compact graph uses denser cards with enough routing space", () => {
+  const layout = buildGraphLayout({
+    compact: true,
+    nodes: [{ path: "entry" }, { path: "service" }, { path: "store" }],
+    connections: [{ source: "entry", target: "service" }, { source: "service", target: "store" }]
+  });
+
+  assert.ok(layout.nodes.every((node) => node.width === 150 && node.height === 52));
+  assert.ok(layout.nodes.every((node) => node.x >= 56 && node.y >= 40));
+  assert.ok(layout.width > layout.nodes[0].width * 3);
+});
+
 test("graph edge routing uses rails instead of crossing node content", () => {
   const layout = buildGraphLayout({
     nodes: [{ path: "entry" }, { path: "service" }, { path: "store" }],

@@ -46,7 +46,7 @@ export type ProjectOverview = {
   evidence: Evidence[];
 };
 
-export type DiagramNodeKind = "actor" | "service" | "worker" | "store" | "artifact" | "transform" | "boundary";
+export type DiagramNodeKind = "actor" | "service" | "worker" | "store" | "artifact" | "transform" | "boundary" | "container" | "queue" | "external-system";
 export type DiagramProvenance = "observed" | "inferred";
 
 export type DiagramNode = {
@@ -75,6 +75,53 @@ export type RepositoryDiagram = {
   description: string;
   nodes: DiagramNode[];
   relationships: DiagramRelationship[];
+  generatedBy: "deepseek-v4-flash" | "deterministic-fallback";
+  confidence: "low" | "medium" | "high";
+};
+
+export type SystemDesignNodeKind = "actor" | "container" | "worker" | "store" | "queue" | "external-system";
+export type SystemDesignBoundaryKind = "system" | "external";
+
+export type SystemDesignBoundary = {
+  id: string;
+  label: string;
+  description: string;
+  kind: SystemDesignBoundaryKind;
+  evidence: Evidence[];
+  provenance: DiagramProvenance;
+  confidence: "low" | "medium" | "high";
+};
+
+export type SystemDesignNode = {
+  id: string;
+  label: string;
+  kind: SystemDesignNodeKind;
+  description: string;
+  technology?: string;
+  boundaryId: string;
+  modulePaths: string[];
+  evidence: Evidence[];
+  provenance: DiagramProvenance;
+  confidence: "low" | "medium" | "high";
+};
+
+export type SystemDesignRelationship = {
+  id: string;
+  source: string;
+  target: string;
+  kind: "calls" | "publishes" | "reads" | "writes" | "depends-on";
+  label: string;
+  protocol?: string;
+  evidence: Evidence[];
+  provenance: DiagramProvenance;
+  confidence: "low" | "medium" | "high";
+};
+
+export type RepositorySystemDesign = {
+  description: string;
+  boundaries: SystemDesignBoundary[];
+  nodes: SystemDesignNode[];
+  relationships: SystemDesignRelationship[];
   generatedBy: "deepseek-v4-flash" | "deterministic-fallback";
   confidence: "low" | "medium" | "high";
 };
@@ -118,6 +165,7 @@ export type AnalysisReport = {
   clusters: string[];
   overview?: ProjectOverview;
   diagram?: RepositoryDiagram;
+  systemDesign?: RepositorySystemDesign;
 };
 
 export type AnalysisJob = {

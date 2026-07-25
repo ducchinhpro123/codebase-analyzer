@@ -1,6 +1,6 @@
 "use client";
 
-import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
+import { memo, useDeferredValue, useEffect, useId, useMemo, useRef, useState } from "react";
 import type { FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import {
@@ -27,7 +27,8 @@ import { shouldStartGraphDrag } from "@/lib/graph-interaction";
 import { buildGraphLayout, GRAPH_EDGE_COLOR_COUNT, graphEdgeColorIndex, routeGraphEdge } from "@/lib/graph-layout";
 import { layoutDiagram, routeDiagramEdge, shouldRenderDiagramEdgeLabel } from "@/lib/diagram-layout";
 import { normalizeReportOverview } from "@/lib/project-overview";
-import type { AnalysisJob, AnalysisReport, AnalyzedModule, DependencyEdge, DiagramNode, ProjectOverview, RepositoryDiagram } from "@/lib/types";
+import { systemDesignToDiagram, systemDesignToMermaid } from "@/lib/system-design";
+import type { AnalysisJob, AnalysisReport, AnalyzedModule, DependencyEdge, DiagramNode, ProjectOverview, RepositoryDiagram, RepositorySystemDesign } from "@/lib/types";
 
 type Props = { reportToken?: string };
 
@@ -190,11 +191,12 @@ const GraphCanvas = memo(function GraphCanvas({ modules, edges, selectedPath, on
         if (!module) return null;
         const isSelected = module.path === selectedPath;
         const isHot = module.metric.hotspotScore >= 70;
+        const inset = compact ? 12 : 14;
         return <g key={module.path} className={`graph-node ${isSelected ? "is-selected" : ""} ${isHot ? "is-hot" : ""} ${draggingPath === node.path ? "is-dragging" : ""}`} role="button" tabIndex={0} aria-grabbed={draggingPath === node.path} aria-label={`Inspect ${module.path}. Drag to reposition.`} onPointerDown={(event) => startDrag(event, node)} onClick={() => selectNode(module)} onKeyDown={(event) => { if (event.key === "Enter" || event.key === " ") selectNode(module); }}>
-          <rect x={node.x} y={node.y} width={node.width} height={node.height} rx="9" />
-          <text x={node.x + 14} y={node.y + 25} className="graph-node-name">{fileName(module.path).slice(0, 22)}</text>
-          <text x={node.x + 14} y={node.y + 48} className="graph-node-meta">{module.cluster} / score {module.metric.hotspotScore}</text>
-          <circle cx={node.x + node.width - 15} cy={node.y + 17} r="4" />
+          <rect x={node.x} y={node.y} width={node.width} height={node.height} rx={compact ? 7 : 9} />
+          <text x={node.x + inset} y={node.y + (compact ? 20 : 25)} className="graph-node-name">{fileName(module.path).slice(0, compact ? 19 : 22)}</text>
+          <text x={node.x + inset} y={node.y + (compact ? 39 : 48)} className="graph-node-meta">{module.cluster} / score {module.metric.hotspotScore}</text>
+          <circle cx={node.x + node.width - (compact ? 12 : 15)} cy={node.y + (compact ? 14 : 17)} r={compact ? 3.5 : 4} />
         </g>;
       })}
     </svg>
@@ -254,11 +256,14 @@ function Inspector({ module }: { module: AnalyzedModule }) {
 const diagramKindLabel: Record<DiagramNode["kind"], string> = {
   actor: "Actor",
   service: "Service",
+  container: "Container",
   worker: "Worker",
   store: "Store",
+  queue: "Queue",
   artifact: "Artifact",
   transform: "Transform",
-  boundary: "Boundary"
+  boundary: "Boundary",
+  "external-system": "External system"
 };
 
 function wrapDiagramText(value: string, maxChars: number) {
@@ -275,7 +280,7 @@ function wrapDiagramText(value: string, maxChars: number) {
   return lines.slice(0, 2).map((line, index, all) => index === all.length - 1 && lines.length > 2 ? `${line.slice(0, Math.max(1, maxChars - 3))}...` : line);
 }
 
-function DiagramExports({ diagram }: { diagram: RepositoryDiagram }) {
+function DiagramExports({ diagram, filePrefix = "repository-overview", ariaLabel = "Data-flow architecture diagram", drawioName = "Repository overview" }: { diagram: RepositoryDiagram; filePrefix?: string; ariaLabel?: string; drawioName?: string }) {
   function download(name: string, content: BlobPart, type: string) {
     const link = document.createElement("a");
     link.href = URL.createObjectURL(new Blob([content], { type }));
@@ -285,15 +290,15 @@ function DiagramExports({ diagram }: { diagram: RepositoryDiagram }) {
   }
 
   function downloadSvg() {
-    download("repository-overview.svg", diagramToSvg(diagram), "image/svg+xml");
+    download(`${filePrefix}.svg`, diagramToSvg(diagram, { ariaLabel }), "image/svg+xml");
   }
 
   function downloadDrawio() {
-    download("repository-overview.drawio", diagramToDrawio(diagram), "application/xml");
+    download(`${filePrefix}.drawio`, diagramToDrawio(diagram, { name: drawioName }), "application/xml");
   }
 
   async function downloadPng() {
-    const svg = diagramToSvg(diagram);
+    const svg = diagramToSvg(diagram, { ariaLabel });
     const layout = layoutDiagram(diagram);
     const image = new window.Image();
     const source = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
@@ -305,7 +310,7 @@ function DiagramExports({ diagram }: { diagram: RepositoryDiagram }) {
       if (!context) return;
       context.scale(2, 2);
       context.drawImage(image, 0, 0, layout.width, layout.height);
-      canvas.toBlob((blob) => { if (blob) download("repository-overview.png", blob, "image/png"); });
+      canvas.toBlob((blob) => { if (blob) download(`${filePrefix}.png`, blob, "image/png"); });
       URL.revokeObjectURL(source);
     };
     image.src = source;
@@ -314,13 +319,104 @@ function DiagramExports({ diagram }: { diagram: RepositoryDiagram }) {
   return <div className="diagram-exports" aria-label="Export diagram"><button type="button" className="quiet-action" onClick={downloadSvg}><DownloadSimple size={15} aria-hidden />SVG</button><button type="button" className="quiet-action" onClick={() => void downloadPng()}><DownloadSimple size={15} aria-hidden />PNG</button><button type="button" className="quiet-action" onClick={downloadDrawio}><FileArrowDown size={15} aria-hidden />Draw.io</button></div>;
 }
 
-function RepositoryDiagramCanvas({ diagram, onOpenModule }: { diagram: RepositoryDiagram; onOpenModule: (modulePath: string) => void }) {
+function SystemDesignExports({ design, svg }: { design: RepositorySystemDesign; svg: string }) {
+  const drawioDiagram = useMemo(() => systemDesignToDiagram(design), [design]);
+
+  function download(name: string, content: BlobPart, type: string) {
+    const link = document.createElement("a");
+    link.href = URL.createObjectURL(new Blob([content], { type }));
+    link.download = name;
+    link.click();
+    URL.revokeObjectURL(link.href);
+  }
+
+  function downloadSvg() {
+    if (svg) download("system-design-architecture.svg", svg, "image/svg+xml");
+  }
+
+  function downloadDrawio() {
+    download("system-design-architecture.drawio", diagramToDrawio(drawioDiagram, { name: "System design architecture" }), "application/xml");
+  }
+
+  function downloadPng() {
+    if (!svg) return;
+    const image = new window.Image();
+    const source = URL.createObjectURL(new Blob([svg], { type: "image/svg+xml" }));
+    image.onload = () => {
+      const width = Math.max(1200, image.naturalWidth);
+      const height = Math.max(700, image.naturalHeight);
+      const canvas = document.createElement("canvas");
+      canvas.width = width * 2;
+      canvas.height = height * 2;
+      const context = canvas.getContext("2d");
+      if (!context) return;
+      context.scale(2, 2);
+      context.fillStyle = "#101517";
+      context.fillRect(0, 0, width, height);
+      context.drawImage(image, 0, 0, width, height);
+      canvas.toBlob((blob) => { if (blob) download("system-design-architecture.png", blob, "image/png"); });
+      URL.revokeObjectURL(source);
+    };
+    image.src = source;
+  }
+
+  return <div className="diagram-exports" aria-label="Export system design"><button type="button" className="quiet-action" disabled={!svg} onClick={downloadSvg}><DownloadSimple size={15} aria-hidden />SVG</button><button type="button" className="quiet-action" disabled={!svg} onClick={downloadPng}><DownloadSimple size={15} aria-hidden />PNG</button><button type="button" className="quiet-action" onClick={downloadDrawio}><FileArrowDown size={15} aria-hidden />Draw.io</button></div>;
+}
+
+function MermaidSystemDesignCanvas({ design, onRendered }: { design: RepositorySystemDesign; onRendered: (svg: string) => void }) {
+  const source = useMemo(() => systemDesignToMermaid(design), [design]);
+  const renderId = useId().replace(/[^A-Za-z0-9_-]/g, "");
+  const [svg, setSvg] = useState("");
+  const [error, setError] = useState("");
+
+  useEffect(() => {
+    let active = true;
+    setSvg("");
+    setError("");
+    onRendered("");
+    void import("mermaid").then(async ({ default: mermaid }) => {
+      mermaid.initialize({
+        startOnLoad: false,
+        securityLevel: "strict",
+        theme: "base",
+        flowchart: { htmlLabels: true, curve: "basis", nodeSpacing: 44, rankSpacing: 72, useMaxWidth: true },
+        themeVariables: {
+          background: "#101517",
+          primaryColor: "#171d20",
+          primaryTextColor: "#f2f4f3",
+          primaryBorderColor: "#71808a",
+          secondaryColor: "#172322",
+          tertiaryColor: "#101517",
+          lineColor: "#89969e",
+          clusterBkg: "#111719",
+          clusterBorder: "#38454c",
+          edgeLabelBackground: "#101517",
+          fontFamily: "var(--font-geist-mono), monospace"
+        }
+      });
+      const rendered = await mermaid.render(`system-design-${renderId}`, source);
+      if (!active) return;
+      setSvg(rendered.svg);
+      onRendered(rendered.svg);
+    }).catch((reason: unknown) => {
+      if (!active) return;
+      setError(reason instanceof Error ? reason.message : "Unable to render the system design");
+    });
+    return () => { active = false; };
+  }, [onRendered, renderId, source]);
+
+  if (error) return <div className="graph-empty"><WarningCircle size={28} aria-hidden /><p>{error}</p></div>;
+  if (!svg) return <div className="mermaid-loading"><SpinnerGap size={22} aria-hidden /><span>Rendering system design</span></div>;
+  return <div className="mermaid-system-design" role="img" aria-label="System design architecture diagram" dangerouslySetInnerHTML={{ __html: svg }} />;
+}
+
+function RepositoryDiagramCanvas({ diagram, onOpenModule, ariaLabel = "Data-flow architecture diagram" }: { diagram: RepositoryDiagram; onOpenModule: (modulePath: string) => void; ariaLabel?: string }) {
   const layout = useMemo(() => layoutDiagram(diagram), [diagram]);
   const nodeMap = useMemo(() => new Map(layout.nodes.map((node) => [node.id, node])), [layout.nodes]);
   const presentKinds = [...new Set(diagram.nodes.map((node) => node.kind))];
   return <div className="diagram-wrap">
     <div className="diagram-legend" aria-label="Diagram legend">{presentKinds.map((kind) => <span key={kind}><i className={`diagram-kind-${kind}`} />{diagramKindLabel[kind]}</span>)}<span><i className="diagram-provenance-observed" />Observed</span><span><i className="diagram-provenance-inferred" />Inferred</span></div>
-    <div className="diagram-canvas"><svg viewBox={`0 0 ${layout.width} ${layout.height}`} role="img" aria-label="Data-flow architecture diagram"><defs><marker id="diagram-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="currentColor" /></marker></defs>{layout.relationships.map((relationship, index) => { const source = nodeMap.get(relationship.source); const target = nodeMap.get(relationship.target); if (!source || !target) return null; const route = routeDiagramEdge(source, target, index, layout.nodes, layout.width); const showLabel = shouldRenderDiagramEdgeLabel(relationship); return <g key={relationship.id} className={`diagram-relationship is-${relationship.provenance}`}><title>{relationship.label}</title><path d={route.path} markerEnd="url(#diagram-arrow)" />{showLabel ? <text x={route.labelX} y={route.labelY} className="diagram-edge-label" textAnchor="middle">{relationship.label}</text> : null}</g>; })}{layout.nodes.map((node) => <g key={node.id} className={`diagram-node is-${node.kind} is-${node.provenance}`} role={node.modulePaths.length ? "button" : undefined} tabIndex={node.modulePaths.length ? 0 : undefined} aria-label={node.modulePaths.length ? `Open supporting module ${node.modulePaths[0]}` : node.label} onClick={() => { if (node.modulePaths[0]) onOpenModule(node.modulePaths[0]); }} onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && node.modulePaths[0]) onOpenModule(node.modulePaths[0]); }}><rect x={node.x} y={node.y} width={node.width} height={node.height} rx="10" /><text x={node.x + 16} y={node.y + 23} className="diagram-node-kind">{diagramKindLabel[node.kind]}</text><text x={node.x + 16} y={node.y + 50} className="diagram-node-label">{node.label.slice(0, 25)}</text><text x={node.x + 16} y={node.y + 73} className="diagram-node-description">{wrapDiagramText(node.description, 34).map((line, index) => <tspan key={line} x={node.x + 16} dy={index ? 14 : 0}>{line}</tspan>)}</text><text x={node.x + 16} y={node.y + 99} className="diagram-node-meta">{node.provenance === "observed" ? "OBSERVED" : "INFERRED"} / {node.modulePaths.length} modules</text></g>)}</svg></div>
+    <div className="diagram-canvas"><svg viewBox={`0 0 ${layout.width} ${layout.height}`} role="img" aria-label={ariaLabel}><defs><marker id="diagram-arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="currentColor" /></marker></defs>{layout.relationships.map((relationship, index) => { const source = nodeMap.get(relationship.source); const target = nodeMap.get(relationship.target); if (!source || !target) return null; const route = routeDiagramEdge(source, target, index, layout.nodes, layout.width); const showLabel = shouldRenderDiagramEdgeLabel(relationship); return <g key={relationship.id} className={`diagram-relationship is-${relationship.provenance}`}><title>{relationship.label}</title><path d={route.path} markerEnd="url(#diagram-arrow)" />{showLabel ? <text x={route.labelX} y={route.labelY} className="diagram-edge-label" textAnchor="middle">{relationship.label}</text> : null}</g>; })}{layout.nodes.map((node) => <g key={node.id} className={`diagram-node is-${node.kind} is-${node.provenance}`} role={node.modulePaths.length ? "button" : undefined} tabIndex={node.modulePaths.length ? 0 : undefined} aria-label={node.modulePaths.length ? `Open supporting module ${node.modulePaths[0]}` : node.label} onClick={() => { if (node.modulePaths[0]) onOpenModule(node.modulePaths[0]); }} onKeyDown={(event) => { if ((event.key === "Enter" || event.key === " ") && node.modulePaths[0]) onOpenModule(node.modulePaths[0]); }}><rect x={node.x} y={node.y} width={node.width} height={node.height} rx="10" /><text x={node.x + 16} y={node.y + 23} className="diagram-node-kind">{diagramKindLabel[node.kind]}</text><text x={node.x + 16} y={node.y + 50} className="diagram-node-label">{node.label.slice(0, 25)}</text><text x={node.x + 16} y={node.y + 73} className="diagram-node-description">{wrapDiagramText(node.description, 34).map((line, index) => <tspan key={line} x={node.x + 16} dy={index ? 14 : 0}>{line}</tspan>)}</text><text x={node.x + 16} y={node.y + 99} className="diagram-node-meta">{node.provenance === "observed" ? "OBSERVED" : "INFERRED"} / {node.modulePaths.length} modules</text></g>)}</svg></div>
   </div>;
 }
 
@@ -356,8 +452,35 @@ function ProjectOverviewView({ report, overview, diagram, onOpenModule }: { repo
   </section>;
 }
 
+function SystemDesignView({ design, onOpenModule }: { design: RepositorySystemDesign; onOpenModule: (modulePath: string) => void }) {
+  const [selectedNodeId, setSelectedNodeId] = useState(design.nodes[0]?.id);
+  const [renderedSvg, setRenderedSvg] = useState("");
+  const selected = design.nodes.find((node) => node.id === selectedNodeId) ?? design.nodes[0];
+  const boundaryById = useMemo(() => new Map(design.boundaries.map((boundary) => [boundary.id, boundary])), [design.boundaries]);
+  const outgoing = selected ? design.relationships.filter((relationship) => relationship.source === selected.id || relationship.target === selected.id) : [];
+
+  return <section className="project-overview-panel system-design-panel" aria-labelledby="system-design-heading">
+    <div className="big-picture-intro">
+      <div className="project-thesis"><span>System design architecture</span><h2 id="system-design-heading">Logical C4 containers, boundaries, and integrations</h2><p>{cleanText(design.description)} Static evidence is shown as observed or inferred; it is not a runtime trace.</p></div>
+      <div className="project-capabilities"><h3>What this view adds</h3><ul><li>Logical application and worker containers</li><li>Queues, stores, and external integrations</li><li>Evidence-linked relationships and boundaries</li></ul></div>
+    </div>
+    <div className="diagram-section">
+      <div className="system-flow-heading"><div><span>Logical architecture</span><h3>How the system is shaped</h3><p>Mermaid lays out the system boundaries and relationships; choose an element below to inspect its evidence.</p></div><SystemDesignExports design={design} svg={renderedSvg} /></div>
+      <div className="diagram-wrap"><MermaidSystemDesignCanvas design={design} onRendered={setRenderedSvg} /></div>
+      <div className="system-design-node-selector" aria-label="Inspect system-design element">{design.nodes.map((node) => <button type="button" key={node.id} className={selected?.id === node.id ? "is-active" : ""} onClick={() => setSelectedNodeId(node.id)}><span>{diagramKindLabel[node.kind]}</span><strong>{node.label}</strong></button>)}</div>
+    </div>
+    {selected ? <div className="system-design-inspector">
+      <div><span className={`language-badge ${selected.kind}`}>{diagramKindLabel[selected.kind]}</span><h3>{selected.label}</h3><p>{cleanText(selected.description)}</p><p className="confidence-note">{boundaryById.get(selected.boundaryId)?.label ?? "Unknown boundary"} · {selected.provenance} · {selected.confidence} confidence{selected.technology ? ` · ${selected.technology}` : ""}</p></div>
+      <div><h4>Supporting modules</h4>{selected.modulePaths.length ? <div className="flow-modules">{selected.modulePaths.map((modulePath) => <button type="button" key={modulePath} onClick={() => onOpenModule(modulePath)}><code>{modulePath}</code></button>)}</div> : <p className="confidence-note">No internal module is directly attached to this element.</p>}</div>
+      <div><h4>Evidence</h4>{selected.evidence.length ? selected.evidence.map((item) => <div className="evidence-block" key={`${item.filePath}-${item.startLine}`}><code>{item.filePath}:{item.startLine}{item.endLine !== item.startLine ? `-${item.endLine}` : ""}</code><p>{cleanText(item.reason)}</p></div>) : <p className="confidence-note">This element is inferred from the available architecture signals.</p>}</div>
+      <div><h4>Relationships</h4>{outgoing.length ? <ul className="system-design-relationships">{outgoing.map((relationship) => <li key={relationship.id}><strong>{relationship.source === selected.id ? "To" : "From"} {relationship.source === selected.id ? relationship.target : relationship.source}</strong><span>{relationship.label}{relationship.protocol ? ` · ${relationship.protocol}` : ""}</span></li>)}</ul> : <p className="confidence-note">No relationship was retained for this element.</p>}</div>
+    </div> : null}
+    <div className="overview-grounding"><section><h3>Boundaries</h3><ul>{design.boundaries.map((boundary) => <li key={boundary.id}><strong>{boundary.label}</strong> - {cleanText(boundary.description)}</li>)}</ul></section><p className="overview-confidence">{design.generatedBy === "deepseek-v4-flash" ? "DeepSeek synthesis" : "Deterministic synthesis"}, {design.confidence} confidence</p></div>
+  </section>;
+}
+
 function ReportView({ report }: { report: AnalysisReport }) {
-  const [activeView, setActiveView] = useState<"overview" | "modules">("overview");
+  const [activeView, setActiveView] = useState<"overview" | "system-design" | "modules">("overview");
   const [selectedPath, setSelectedPath] = useState(() => report.modules.find((module) => module.metric.hotspotScore >= 80)?.path ?? report.modules[0]?.path);
   const [cluster, setCluster] = useState("all");
   const [query, setQuery] = useState("");
@@ -370,6 +493,7 @@ function ReportView({ report }: { report: AnalysisReport }) {
   const normalizedReport = useMemo(() => normalizeReportOverview(report), [report]);
   const overview = normalizedReport.overview!;
   const diagram = normalizedReport.diagram!;
+  const systemDesign = normalizedReport.systemDesign!;
 
   async function copyReportLink() {
     await navigator.clipboard.writeText(window.location.href);
@@ -386,8 +510,8 @@ function ReportView({ report }: { report: AnalysisReport }) {
   return <main className="report-page">
     <header className="report-nav"><Brand /><span className="report-context">Architecture report</span><div className="report-actions"><button type="button" className="quiet-action" onClick={copyReportLink}>{copied ? <CheckCircle size={17} weight="fill" aria-hidden /> : <ShareNetwork size={17} aria-hidden />}{copied ? "Copied" : "Share"}</button><a className="primary-action" href="/">New analysis <ArrowRight size={17} aria-hidden /></a></div></header>
     <section className="report-overview"><div><h1>{report.repositoryName}</h1><div className="repository-meta"><span><CheckCircle size={16} weight="fill" aria-hidden />Analysis complete</span><span><GitBranch size={16} aria-hidden />{report.branch}</span><span><BracketsCurly size={16} aria-hidden />{shortSha(report.commitSha)}</span></div></div><dl><div><dt>Modules</dt><dd>{report.totals.modules}</dd></div><div><dt>Edges</dt><dd>{report.totals.edges}</dd></div><div><dt>Lines</dt><dd>{report.totals.lines.toLocaleString()}</dd></div></dl></section>
-    <div className="report-tabs" role="tablist" aria-label="Report views"><button id="overview-tab" type="button" role="tab" aria-controls="overview-panel" aria-selected={activeView === "overview"} className={activeView === "overview" ? "is-active" : ""} onClick={() => setActiveView("overview")}><Graph size={17} aria-hidden />Big picture</button><button id="modules-tab" type="button" role="tab" aria-controls="modules-panel" aria-selected={activeView === "modules"} className={activeView === "modules" ? "is-active" : ""} onClick={() => setActiveView("modules")}><BracketsCurly size={17} aria-hidden />Module map</button></div>
-    {activeView === "overview" ? <div id="overview-panel" className="project-overview-workspace" role="tabpanel" aria-labelledby="overview-tab"><ProjectOverviewView report={report} overview={overview} diagram={diagram} onOpenModule={openModule} /></div> : <div id="modules-panel" className="report-workspace" role="tabpanel" aria-labelledby="modules-tab">
+    <div className="report-tabs" role="tablist" aria-label="Report views"><button id="overview-tab" type="button" role="tab" aria-controls="overview-panel" aria-selected={activeView === "overview"} className={activeView === "overview" ? "is-active" : ""} onClick={() => setActiveView("overview")}><Graph size={17} aria-hidden />Big picture</button><button id="system-design-tab" type="button" role="tab" aria-controls="system-design-panel" aria-selected={activeView === "system-design"} className={activeView === "system-design" ? "is-active" : ""} onClick={() => setActiveView("system-design")}><ShareNetwork size={17} aria-hidden />System design</button><button id="modules-tab" type="button" role="tab" aria-controls="modules-panel" aria-selected={activeView === "modules"} className={activeView === "modules" ? "is-active" : ""} onClick={() => setActiveView("modules")}><BracketsCurly size={17} aria-hidden />Module map</button></div>
+    {activeView === "overview" ? <div id="overview-panel" className="project-overview-workspace" role="tabpanel" aria-labelledby="overview-tab"><ProjectOverviewView report={report} overview={overview} diagram={diagram} onOpenModule={openModule} /></div> : activeView === "system-design" ? <div id="system-design-panel" className="project-overview-workspace" role="tabpanel" aria-labelledby="system-design-tab"><SystemDesignView design={systemDesign} onOpenModule={openModule} /></div> : <div id="modules-panel" className="report-workspace" role="tabpanel" aria-labelledby="modules-tab">
       <aside className="module-browser">
         <div className="module-search"><label htmlFor="module-search">Find a module</label><div><MagnifyingGlass size={16} aria-hidden /><input id="module-search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="Search paths" /></div></div>
         <nav aria-label="Architecture areas"><h2>Areas</h2><button type="button" className={cluster === "all" ? "is-active" : ""} onClick={() => setCluster("all")}><span>All modules</span><strong>{report.modules.length}</strong></button>{report.clusters.map((item) => <button type="button" key={item} className={cluster === item ? "is-active" : ""} onClick={() => setCluster(item)}><span>{item}</span><strong>{clusterCounts.get(item)}</strong></button>)}</nav>

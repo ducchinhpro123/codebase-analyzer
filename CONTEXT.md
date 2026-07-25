@@ -83,3 +83,15 @@ _Avoid_: LLM edge, guessed arrow
 **Diagram artifact**:
 An exported representation of a Data-flow architecture diagram, such as SVG, PNG, or a Draw.io-compatible document.
 _Avoid_: Screenshot, chart image
+
+**System-design architecture**:
+A logical C4-style view of the Repository's containers, workers, stores, queues, external systems, and communication relationships.
+_Avoid_: Runtime trace, deployment topology, infrastructure proof
+
+**System-design element**:
+A logical application container, worker, store, queue, actor, or external system retained in the System-design architecture.
+_Avoid_: File node, semantic node
+
+**System-design relationship**:
+An evidence-backed or inferred interaction between System-design elements, such as a call, queue publication, read, write, or dependency.
+_Avoid_: Runtime call, guaranteed execution
