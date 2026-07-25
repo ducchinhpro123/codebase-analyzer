@@ -1,3 +1,16 @@
+# Shared UI components
+
+Framework: Next.js 14 App Router with React 18 and TypeScript. Icons use `@phosphor-icons/react`. Styling is custom global CSS; there is no external component library or dedicated UI primitives directory.
+
+The application is intentionally self-contained in one client component. The reusable UI implementations below therefore live in `app/components/AnalyzerShell.tsx`.
+
+## AnalyzerShell
+
+- Path: `app/components/AnalyzerShell.tsx`
+- Description: Shared client shell for the landing page, progress state, report overview, module map, inspector, and error/loading views.
+- Key props: `reportToken?: string`
+
+```tsx
 "use client";
 
 import { memo, useDeferredValue, useEffect, useMemo, useRef, useState } from "react";
@@ -13,7 +26,6 @@ import {
   FileCode,
   FileArrowDown,
   GitBranch,
-  GitCommit,
   GithubLogo,
   Graph,
   MagnifyingGlass,
@@ -206,19 +218,10 @@ function HeroPreview() {
   const [selectedPath, setSelectedPath] = useState(demoReport.modules[1].path);
   const modules = demoReport.modules.slice(0, 6);
   const selected = modules.find((module) => module.path === selectedPath) ?? modules[0];
-  return <div className="instrument-preview" aria-label="Interactive architecture report preview">
-    <div className="instrument-preview-header">
-      <div className="instrument-repository"><GitCommit size={14} aria-hidden /><span>EXPRESSJS / EXPRESS / MAIN: AE6DD37</span></div>
-      <div className="instrument-legend" aria-label="Graph legend"><span><i className="is-observed" />OBSERVED</span><span><i />INFERRED</span></div>
-    </div>
-    <div className="instrument-graph">
-      <div className="instrument-scan-line" aria-hidden />
-      <GraphCanvas modules={modules} edges={demoReport.edges} selectedPath={selected.path} onSelect={(module) => setSelectedPath(module.path)} compact />
-    </div>
-    <div className="instrument-selection">
-      <div className="instrument-selected-file"><FileCode size={15} aria-hidden /><code>{selected.path}</code></div>
-      <div className="instrument-selection-copy"><p>{cleanText(selected.summary.purpose)}</p><span>CONFIDENCE: {selected.summary.confidence.toUpperCase()}<br />SYNTHESIS: {selected.summary.generatedBy === "deepseek-v4-flash" ? "DEEPSEEK" : "DETERMINISTIC"}</span></div>
-    </div>
+  return <div className="product-preview" aria-label="Interactive architecture report preview">
+    <div className="preview-header"><div><GithubLogo size={17} weight="fill" aria-hidden /><span>expressjs/express</span></div><span className="preview-commit">main / ae6dd37</span></div>
+    <GraphCanvas modules={modules} edges={demoReport.edges} selectedPath={selected.path} onSelect={(module) => setSelectedPath(module.path)} compact />
+    <div className="preview-selection"><div><FileCode size={17} aria-hidden /><code>{selected.path}</code></div><strong>{cleanText(selected.summary.purpose)}</strong></div>
   </div>;
 }
 
@@ -412,39 +415,14 @@ function ReportError({ message }: { message: string }) {
 }
 
 function LandingPage({ url, setUrl, submit, job, error, isSubmitting }: { url: string; setUrl: (value: string) => void; submit: (event: FormEvent<HTMLFormElement>) => void; job?: AnalysisJob; error: string; isSubmitting: boolean }) {
-  return <main className="instrument-page">
-    <header className="instrument-header">
-      <div className="instrument-header-left"><Brand /><span className="instrument-divider" aria-hidden /><a className="instrument-nav-link" href="/report/demo">Sample report</a></div>
-      <div className="instrument-runtime" aria-label="Analyzer status"><span>V4.2_STABLE</span><i />ANALYZER_READY</div>
-    </header>
-    <div className="instrument-main">
-      <aside className="instrument-sidebar">
-        <div className="instrument-sidebar-copy">
-          <p className="instrument-kicker">Instrument status: Standby</p>
-          <h1>Map the code.<br />Find the risk.</h1>
-          <p className="instrument-summary">Technical evidence-backed architecture reporting for complex GitHub repositories.</p>
-          <form className="instrument-form" onSubmit={submit}>
-            <div className="instrument-field-label"><label htmlFor="repository-url">Repository target</label></div>
-            <div className="instrument-repository-field">
-              <div className="instrument-field-icon"><GithubLogo size={16} weight="fill" aria-hidden /></div>
-              <input id="repository-url" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="github.com/owner/repo" autoComplete="url" spellCheck={false} />
-              <button type="submit" disabled={isSubmitting || Boolean(job && job.status !== "failed")}>{isSubmitting ? "Starting" : "Analyze"}</button>
-            </div>
-            <p className="instrument-form-helper">Supports JS, TS, Python / Max 100MB</p>
-            {error ? <p className="instrument-form-error"><WarningCircle size={15} aria-hidden />{error}</p> : null}
-          </form>
-        </div>
-        <div className="instrument-capabilities" aria-label="Analysis capabilities">
-          <article><Graph size={18} aria-hidden /><div><h2>Topology map</h2><p>Full module adjacency matrix graphing.</p></div></article>
-          <article><GitBranch size={18} aria-hidden /><div><h2>Static trace</h2><p>Import resolution and cycle detection.</p></div></article>
-          <article><WarningCircle size={18} aria-hidden /><div><h2>Risk signals</h2><p>Complexity hotspots and debt surfacing.</p></div></article>
-        </div>
-      </aside>
-      <section className="instrument-canvas" aria-label="Tracepath analysis instrument">
-        {job ? <AnalysisProgress job={job} /> : <HeroPreview />}
-      </section>
-    </div>
-    <footer className="instrument-footer"><span>© TRACEPATH_ENGINEERING_CORP</span><div><span>LOC: 48,291</span><span>EDGES: 1,022</span><span>RUNTIME: 142MS</span></div></footer>
+  return <main className="landing-page">
+    <header className="site-header"><Brand /><a className="sample-link" href="/report/demo">Sample report <ArrowUpRight size={16} aria-hidden /></a></header>
+    <section className="landing-hero">
+      <div className="hero-content"><p className="hero-kicker">Codebase analysis</p><h1>Map the code. Find the risk.</h1><p className="hero-summary">Turn any public GitHub repository into a navigable system map in minutes.</p><form className="repository-form" onSubmit={submit}><label htmlFor="repository-url">GitHub repository</label><div className="repository-field"><GithubLogo size={20} weight="fill" aria-hidden /><input id="repository-url" value={url} onChange={(event) => setUrl(event.target.value)} placeholder="github.com/owner/repository" autoComplete="url" spellCheck={false} /><button type="submit" disabled={isSubmitting || Boolean(job && job.status !== "failed")}><span>{isSubmitting ? "Starting" : "Analyze"}</span><ArrowRight size={18} aria-hidden /></button></div><p className="form-helper">Public JS, TS, and Python repositories up to 100 MB.</p>{error ? <p className="form-error"><WarningCircle size={17} aria-hidden />{error}</p> : null}</form></div>
+      <div className="hero-product">{job ? <AnalysisProgress job={job} /> : <HeroPreview />}</div>
+    </section>
+    <section className="capability-band" aria-label="Analysis capabilities"><article><Graph size={22} aria-hidden /><div><h2>Architecture map</h2><p>See system areas and how modules connect.</p></div></article><article><GitBranch size={22} aria-hidden /><div><h2>Dependency paths</h2><p>Trace internal imports and unresolved edges.</p></div></article><article><WarningCircle size={22} aria-hidden /><div><h2>Complexity signals</h2><p>Start with the files most likely to slow a change.</p></div></article></section>
+    <footer className="site-footer"><span>Tracepath</span><span>Built for unfamiliar codebases.</span></footer>
   </main>;
 }
 
@@ -496,3 +474,6 @@ export function AnalyzerShell({ reportToken }: Props) {
   if (reportToken) return <ReportLoading />;
   return <LandingPage url={url} setUrl={setUrl} submit={submit} job={job} error={error} isSubmitting={isSubmitting} />;
 }
+
+```
+

@@ -10,3 +10,4 @@ out
 tmp
 data
 *.tsbuildinfo
+.superdesign/tmp/
