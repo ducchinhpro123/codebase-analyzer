@@ -21,6 +21,9 @@ export async function POST(request: Request) {
   const repositoryUrl = body && typeof body === "object" && "repositoryUrl" in body ? (body as { repositoryUrl?: unknown }).repositoryUrl : undefined;
   const parsed = repositoryUrlSchema.safeParse(repositoryUrl);
   if (!parsed.success) return NextResponse.json({ error: parsed.error.issues[0]?.message ?? "Invalid repository URL" }, { status: 400 });
+  if (!(process.env.LLM_API_KEY ?? process.env.CKEY_API_KEY)) {
+    return NextResponse.json({ error: "An LLM API key is required to generate the Big Picture analysis." }, { status: 503 });
+  }
   const job = createJob(parsed.data);
 
   let queued = false;

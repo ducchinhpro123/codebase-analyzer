@@ -112,7 +112,7 @@ export function stageMessage(stage: AnalysisStage) {
     indexing: "Indexing source files and imports",
     graphing: "Drawing the dependency graph",
     scoring: "Finding complexity hotspots",
-    summarizing: "Asking DeepSeek what each module actually does",
+    summarizing: "Asking the LLM what the project does and why it matters",
     completed: "Report ready",
     failed: "Analysis stopped"
   }[stage];

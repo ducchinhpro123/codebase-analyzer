@@ -3,7 +3,7 @@ import test from "node:test";
 import { demoReport } from "../lib/demo";
 import { diagramToDrawio, diagramToSvg } from "../lib/diagram-export";
 import { layoutDiagram, routeDiagramEdge, shouldRenderDiagramEdgeLabel } from "../lib/diagram-layout";
-import { buildFallbackProjectOverview, buildFallbackRepositoryDiagram, normalizeReportOverview } from "../lib/project-overview";
+import { buildFallbackProjectOverview, buildFallbackRepositoryDiagram, normalizeReportOverview, repositoryDiagramToMermaid } from "../lib/project-overview";
 import { projectOverviewSchema } from "../lib/validation";
 
 test("builds a navigable project overview from a persisted module graph", () => {
@@ -16,15 +16,29 @@ test("builds a navigable project overview from a persisted module graph", () => 
 
   assert.equal(projectOverviewSchema.safeParse(overview).success, true);
   assert.equal(overview.flow.length, 4);
+  assert.ok(overview.problem.length > 0);
+  assert.ok(overview.outcome.length > 0);
   assert.ok(overview.capabilities.length > 0);
   assert.ok(overview.flow.flatMap((step) => step.modulePaths).every((modulePath) => modulePaths.has(modulePath)));
 });
 
+test("renders the Big Picture concept model as Mermaid", () => {
+  const source = repositoryDiagramToMermaid(demoReport.diagram!);
+
+  assert.match(source, /^flowchart LR/);
+  assert.match(source, /classDef person/);
+  assert.match(source, /-->\|"/);
+  assert.doesNotMatch(source, /lib\/analyzer\.ts/);
+});
+
 test("legacy reports receive a big-picture flow before they are rendered", () => {
-  const legacyReport = { ...demoReport, overview: undefined };
+  const legacyOverview = { ...demoReport.overview!, problem: "", outcome: "" };
+  const legacyReport = { ...demoReport, overview: legacyOverview };
   const normalized = normalizeReportOverview(legacyReport);
 
   assert.ok(normalized.overview);
+  assert.ok(normalized.overview.problem);
+  assert.ok(normalized.overview.outcome);
   assert.ok(normalized.overview.flow.length >= 2);
   assert.ok(normalized.diagram);
   assert.ok(normalized.systemDesign);

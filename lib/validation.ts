@@ -27,11 +27,13 @@ export const llmSummarySchema = z.object({
   dependencies: z.array(z.string()).default([]),
   risks: z.array(z.string()).default([]),
   confidence: z.enum(["low", "medium", "high"]).default("medium"),
-  evidence: z.array(z.object({ filePath: z.string(), startLine: z.number().int().positive(), endLine: z.number().int().positive(), reason: z.string() })).default([])
+  evidence: z.array(z.object({ filePath: z.string(), startLine: z.coerce.number().int().positive(), endLine: z.coerce.number().int().positive(), reason: z.string() })).default([])
 });
 
 export const projectOverviewSchema = z.object({
   summary: z.string().min(1).max(1600),
+  problem: z.string().min(1).max(800),
+  outcome: z.string().min(1).max(800),
   audience: z.array(z.string().min(1).max(180)).max(5).default([]),
   capabilities: z.array(z.string().min(1).max(280)).min(1).max(6),
   flow: z.array(z.object({
@@ -41,10 +43,10 @@ export const projectOverviewSchema = z.object({
   })).min(2).max(6),
   risks: z.array(z.string().min(1).max(320)).max(5).default([]),
   confidence: z.enum(["low", "medium", "high"]).default("medium"),
-  evidence: z.array(z.object({ filePath: z.string(), startLine: z.number().int().positive(), endLine: z.number().int().positive(), reason: z.string() })).max(8).default([])
+  evidence: z.array(z.object({ filePath: z.string(), startLine: z.coerce.number().int().positive(), endLine: z.coerce.number().int().positive(), reason: z.string() })).max(8).default([])
 });
 
-const diagramEvidenceSchema = z.object({ filePath: z.string(), startLine: z.number().int().positive(), endLine: z.number().int().positive(), reason: z.string() });
+const diagramEvidenceSchema = z.object({ filePath: z.string(), startLine: z.coerce.number().int().positive(), endLine: z.coerce.number().int().positive(), reason: z.string() });
 
 export const repositoryDiagramSchema = z.object({
   description: z.string().min(1).max(600),
@@ -68,14 +70,14 @@ export const repositoryDiagramSchema = z.object({
     provenance: z.enum(["observed", "inferred"]).default("inferred"),
     confidence: z.enum(["low", "medium", "high"]).default("medium")
   })).max(36),
-  generatedBy: z.enum(["deepseek-v4-flash", "deterministic-fallback"]).default("deterministic-fallback"),
+  generatedBy: z.string().min(1).default("deterministic-fallback"),
   confidence: z.enum(["low", "medium", "high"]).default("medium")
 });
 
 const systemDesignEvidenceSchema = z.object({
   filePath: z.string(),
-  startLine: z.number().int().positive(),
-  endLine: z.number().int().positive(),
+  startLine: z.coerce.number().int().positive(),
+  endLine: z.coerce.number().int().positive(),
   reason: z.string()
 });
 
@@ -113,6 +115,6 @@ export const repositorySystemDesignSchema = z.object({
     provenance: z.enum(["observed", "inferred"]).default("inferred"),
     confidence: z.enum(["low", "medium", "high"]).default("medium")
   })).max(40),
-  generatedBy: z.enum(["deepseek-v4-flash", "deterministic-fallback"]).default("deterministic-fallback"),
+  generatedBy: z.string().min(1).default("deterministic-fallback"),
   confidence: z.enum(["low", "medium", "high"]).default("medium")
 });

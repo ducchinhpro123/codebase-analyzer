@@ -1,4 +1,4 @@
-export type Language = "typescript" | "javascript" | "python" | "unknown";
+export type Language = string;
 
 export type AnalysisStage =
   | "queued"
@@ -18,7 +18,7 @@ export type ModuleSummary = {
   dependencies: string[];
   risks: string[];
   confidence: "low" | "medium" | "high";
-  generatedBy: "deepseek-v4-flash" | "deterministic-fallback";
+  generatedBy: string;
   evidence?: Evidence[];
 };
 
@@ -37,12 +37,14 @@ export type ProjectFlowStep = {
 
 export type ProjectOverview = {
   summary: string;
+  problem: string;
+  outcome: string;
   audience: string[];
   capabilities: string[];
   flow: ProjectFlowStep[];
   risks: string[];
   confidence: "low" | "medium" | "high";
-  generatedBy: "deepseek-v4-flash" | "deterministic-fallback";
+  generatedBy: string;
   evidence: Evidence[];
 };
 
@@ -75,7 +77,7 @@ export type RepositoryDiagram = {
   description: string;
   nodes: DiagramNode[];
   relationships: DiagramRelationship[];
-  generatedBy: "deepseek-v4-flash" | "deterministic-fallback";
+  generatedBy: string;
   confidence: "low" | "medium" | "high";
 };
 
@@ -122,7 +124,7 @@ export type RepositorySystemDesign = {
   boundaries: SystemDesignBoundary[];
   nodes: SystemDesignNode[];
   relationships: SystemDesignRelationship[];
-  generatedBy: "deepseek-v4-flash" | "deterministic-fallback";
+  generatedBy: string;
   confidence: "low" | "medium" | "high";
 };
 

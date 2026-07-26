@@ -29,6 +29,21 @@ function diagramId(value: string) {
   return value.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "") || "node";
 }
 
+function mermaidText(value: string, maxLength = 120) {
+  return value
+    .replace(/&/g, "&amp;")
+    .replace(/"/g, "&quot;")
+    .replace(/[<>]/g, "")
+    .replace(/[{}[\]|]/g, "/")
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, maxLength);
+}
+
+function mermaidNodeId(value: string) {
+  return `concept_${diagramId(value).replace(/-/g, "_")}`;
+}
+
 function kindForModules(cluster: string, modules: AnalyzedModule[]): DiagramNodeKind {
   const text = `${cluster} ${modules.map((module) => `${module.path} ${module.summary.purpose}`).join(" ")}`.toLowerCase();
   if (/test|spec/.test(text)) return "boundary";
@@ -122,6 +137,10 @@ export function buildFallbackProjectOverview({ repositoryName, languages, module
 
   return {
     summary,
+    problem: "The specific user problem could not be established without an AI-generated reading of the repository context.",
+    outcome: capabilities.length
+      ? capabilities[0]
+      : "It organizes the available source into a project that can be inspected and understood.",
     audience: [],
     capabilities: capabilities.length ? capabilities : ["Organizes the analyzed source modules into an executable system."],
     flow,
@@ -132,14 +151,51 @@ export function buildFallbackProjectOverview({ repositoryName, languages, module
   };
 }
 
+export function repositoryDiagramToMermaid(diagram: RepositoryDiagram) {
+  const nodeIds = new Map(diagram.nodes.map((node) => [node.id, mermaidNodeId(node.id)]));
+  const lines = ["flowchart LR"];
+
+  for (const node of diagram.nodes) {
+    const id = nodeIds.get(node.id)!;
+    const label = `<b>${mermaidText(node.label, 52)}</b><br/>${mermaidText(node.description, 100)}`;
+    if (node.kind === "actor") lines.push(`  ${id}(["${label}"]):::person`);
+    else if (node.kind === "artifact") lines.push(`  ${id}[/"${label}"/]:::outcome`);
+    else if (node.kind === "boundary") lines.push(`  ${id}{{"${label}"}}:::problem`);
+    else lines.push(`  ${id}["${label}"]:::concept`);
+  }
+
+  for (const relationship of diagram.relationships) {
+    const source = nodeIds.get(relationship.source);
+    const target = nodeIds.get(relationship.target);
+    if (!source || !target || source === target) continue;
+    lines.push(`  ${source} -->|"${mermaidText(relationship.label, 64)}"| ${target}`);
+  }
+
+  lines.push("  classDef person fill:#20251b,stroke:#c7ff3d,color:#f2f1ec,stroke-width:2px");
+  lines.push("  classDef problem fill:#251d1b,stroke:#e18b73,color:#f2f1ec,stroke-width:1.5px");
+  lines.push("  classDef concept fill:#171d20,stroke:#71808a,color:#f2f1ec,stroke-width:1.5px");
+  lines.push("  classDef outcome fill:#18241e,stroke:#72b58b,color:#f2f1ec,stroke-width:1.5px");
+  return lines.join("\n");
+}
+
 export function normalizeReportOverview(report: AnalysisReport): AnalysisReport {
   const systemDesign = report.systemDesign && !isFileLevelSystemDesign(report.systemDesign)
     ? report.systemDesign
     : buildFallbackSystemDesign({ repositoryName: report.repositoryName, modules: report.modules, edges: report.edges });
-  if (report.overview && report.diagram && systemDesign === report.systemDesign) return report;
+  const fallbackOverview = () => buildFallbackProjectOverview({ repositoryName: report.repositoryName, languages: report.languages, modules: report.modules });
+  const overview = report.overview?.problem && report.overview.outcome
+    ? report.overview
+    : report.overview
+    ? {
+        ...report.overview,
+        problem: report.overview.problem || "The project addresses the need described in its repository context.",
+        outcome: report.overview.outcome || report.overview.capabilities[0] || report.overview.summary
+      }
+    : fallbackOverview();
+  if (report.overview === overview && report.diagram && systemDesign === report.systemDesign) return report;
   return {
     ...report,
-    overview: report.overview ?? buildFallbackProjectOverview({ repositoryName: report.repositoryName, languages: report.languages, modules: report.modules }),
+    overview,
     diagram: report.diagram ?? buildFallbackRepositoryDiagram({ modules: report.modules, edges: report.edges }),
     systemDesign
   };

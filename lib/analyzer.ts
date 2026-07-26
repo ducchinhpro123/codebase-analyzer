@@ -7,7 +7,9 @@ import { promisify } from "node:util";
 import OpenAI from "openai";
 import { parseJavaScriptImports } from "./ast";
 import { mapWithConcurrency } from "./concurrency";
-import { buildFallbackProjectOverview, buildFallbackRepositoryDiagram } from "./project-overview";
+import { buildFallbackProjectOverview } from "./project-overview";
+import { normalizeProjectOverviewCandidate, normalizeRepositoryDiagramCandidate, normalizeRepositorySystemDesignCandidate } from "./llm-normalization";
+import { isAnalyzableSourceFile, languageFor } from "./source-files";
 import { buildFallbackSystemDesign, normalizeSystemDesign, type ArchitectureContextFile } from "./system-design";
 import { llmSummarySchema, projectOverviewSchema, repositoryDiagramSchema, repositorySystemDesignSchema } from "./validation";
 import type {
@@ -24,22 +26,43 @@ import type {
 } from "./types";
 
 const execFileAsync = promisify(execFile);
-const DEFAULT_EXTENSIONS = new Set([".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py"]);
-const IGNORED = new Set([".git", "node_modules", "dist", "build", "coverage", ".next", "vendor", "__pycache__"]);
+const IGNORED = new Set([
+  ".git",
+  ".gradle",
+  ".idea",
+  ".next",
+  ".nuxt",
+  ".pytest_cache",
+  ".tox",
+  ".venv",
+  "__pycache__",
+  "build",
+  "coverage",
+  "dist",
+  "env",
+  "node_modules",
+  "obj",
+  "target",
+  "vendor",
+  "venv"
+]);
 const MAX_FILES = Number(process.env.ANALYZER_MAX_FILES ?? 10_000);
 const MAX_BYTES = Number(process.env.ANALYZER_MAX_BYTES ?? 100 * 1024 * 1024);
+
+function configuredModel() {
+  const model = process.env.LLM_MODEL?.trim();
+  if (!model) throw new Error("LLM_MODEL must be configured for repository analysis");
+  return model;
+}
+
+function llmFailure(message: string, error: unknown) {
+  const detail = error instanceof Error ? error.message : String(error);
+  return new Error(`${message}: ${detail.slice(0, 800)}`, { cause: error });
+}
 
 type Progress = (stage: AnalysisStage, progress: number, message: string) => void;
 type IndexedFile = { path: string; language: Language; source: string; lines: number };
 type ProjectContextFile = ArchitectureContextFile;
-
-function languageFor(filePath: string): Language {
-  const extension = path.extname(filePath).toLowerCase();
-  if (extension === ".ts" || extension === ".tsx") return "typescript";
-  if (extension === ".js" || extension === ".jsx" || extension === ".mjs" || extension === ".cjs") return "javascript";
-  if (extension === ".py") return "python";
-  return "unknown";
-}
 
 async function listSourceFiles(root: string): Promise<IndexedFile[]> {
   const files: IndexedFile[] = [];
@@ -54,13 +77,16 @@ async function listSourceFiles(root: string): Promise<IndexedFile[]> {
         await visit(child);
         continue;
       }
-      if (!entry.isFile() || !DEFAULT_EXTENSIONS.has(path.extname(entry.name).toLowerCase())) continue;
-      if (files.length >= MAX_FILES) throw new Error(`Repository exceeds the ${MAX_FILES.toLocaleString()} file limit`);
+      if (!entry.isFile()) continue;
       const stat = await fs.stat(path.join(root, child));
+      if (stat.size > MAX_BYTES) continue;
+      const content = await fs.readFile(path.join(root, child));
+      if (!isAnalyzableSourceFile(child, content)) continue;
+      if (files.length >= MAX_FILES) throw new Error(`Repository exceeds the ${MAX_FILES.toLocaleString()} file limit`);
       totalBytes += stat.size;
-      if (totalBytes > MAX_BYTES) throw new Error("Repository exceeds the 100 MB source limit");
-      const source = await fs.readFile(path.join(root, child), "utf8");
-      files.push({ path: child.split(path.sep).join("/"), language: languageFor(child), source, lines: source.split(/\r?\n/).length });
+      if (totalBytes > MAX_BYTES) throw new Error(`Repository exceeds the ${(MAX_BYTES / 1024 / 1024).toLocaleString()} MB source limit`);
+      const source = content.toString("utf8");
+      files.push({ path: child.split(path.sep).join("/"), language: languageFor(child, source), source, lines: source.split(/\r?\n/).length });
     }
   }
 
@@ -171,10 +197,11 @@ async function summarizeWithLlm(file: IndexedFile, metric: ModuleMetric, depende
   const fallback = fallbackSummary(file, metric, dependencyNames);
   const apiKey = process.env.LLM_API_KEY ?? process.env.CKEY_API_KEY;
   if (!apiKey) return fallback;
+  const model = configuredModel();
   try {
     const client = new OpenAI({ apiKey, baseURL: process.env.LLM_BASE_URL ?? process.env.CKEY_BASE_URL ?? "https://api.xah.io/v1" });
     const response = await client.chat.completions.create({
-      model: process.env.LLM_MODEL ?? "deepseek-v4-flash",
+      model,
       temperature: 0.1,
       response_format: { type: "json_object" },
       messages: [
@@ -183,7 +210,7 @@ async function summarizeWithLlm(file: IndexedFile, metric: ModuleMetric, depende
           role: "user",
           content: JSON.stringify({
             task: "Explain one source module for an architecture report.",
-            shape: { modulePath: "string", purpose: "string", responsibilities: ["string"], keyFlows: ["string"], dependencies: ["string"], risks: ["string"], confidence: "low | medium | high", evidence: [{ filePath: "string", startLine: "number", endLine: "number", reason: "string" }] },
+            shape: { modulePath: "string", purpose: "string", responsibilities: ["string"], keyFlows: ["string"], dependencies: ["string"], risks: ["string"], confidence: "low | medium | high", evidence: [{ filePath: "string", startLine: 1, endLine: 2, reason: "string" }] },
             modulePath: file.path,
             language: file.language,
             metrics: metric,
@@ -197,13 +224,13 @@ async function summarizeWithLlm(file: IndexedFile, metric: ModuleMetric, depende
     if (!raw) return fallback;
     const parsed = llmSummarySchema.parse(JSON.parse(raw));
     const evidence = parsed.evidence.filter((item) => item.filePath === file.path && item.startLine <= item.endLine && item.startLine <= file.lines).map((item) => ({ ...item, endLine: Math.min(item.endLine, file.lines) }));
-    return { ...parsed, evidence: evidence.length ? evidence : fallback.evidence, generatedBy: "deepseek-v4-flash" };
+    return { ...parsed, evidence: evidence.length ? evidence : fallback.evidence, generatedBy: model };
   } catch {
     return fallback;
   }
 }
 
-async function summarizeProjectWithLlm(input: {
+export async function summarizeProjectWithLlm(input: {
   repositoryName: string;
   languages: Language[];
   modules: AnalyzedModule[];
@@ -218,7 +245,8 @@ async function summarizeProjectWithLlm(input: {
     readmeSummary: readmeSummary(input.contextFiles)
   });
   const apiKey = process.env.LLM_API_KEY ?? process.env.CKEY_API_KEY;
-  if (!apiKey) return fallback;
+  if (!apiKey) throw new Error("Big Picture analysis requires LLM_API_KEY or CKEY_API_KEY");
+  const model = configuredModel();
 
   try {
     const modulePaths = new Set(input.modules.map((module) => module.path));
@@ -232,23 +260,28 @@ async function summarizeProjectWithLlm(input: {
     const internalEdges = input.edges.filter((edge) => modulePaths.has(edge.target)).slice(0, 240);
     const client = new OpenAI({ apiKey, baseURL: process.env.LLM_BASE_URL ?? process.env.CKEY_BASE_URL ?? "https://api.xah.io/v1" });
     const response = await client.chat.completions.create({
-      model: process.env.LLM_MODEL ?? "deepseek-v4-flash",
+      model,
       temperature: 0.1,
       response_format: { type: "json_object" },
       messages: [
-        { role: "system", content: "You are a careful software architect. Explain the analyzed repository itself, not the analysis tool. Return only valid JSON matching the requested shape. Base every claim on the supplied README, manifests, module summaries, and dependency edges. Never invent features." },
+        {
+          role: "system",
+          content: "You explain software products to a curious person who knows nothing about code. Explain the analyzed project itself, not the analysis tool or repository structure. Lead with the human problem, the project's purpose, and the useful outcome. Use ordinary language. Do not mention frameworks, files, modules, APIs, databases, implementation patterns, or code metrics unless one is essential to understanding what the product does. Return only valid JSON matching the requested shape. Ground every claim in the supplied evidence and state uncertainty instead of inventing features."
+        },
         {
           role: "user",
           content: JSON.stringify({
-            task: "Create a concise project-level explanation and a 3 to 6 step system flow for an engineer seeing this repository for the first time.",
+            task: "Create a plain-language Big Picture for someone deciding what this project is, what problem it solves, who it helps, and what happens when it is used. The reader has no programming knowledge.",
             shape: {
-              summary: "plain-language description of what the project does and why it exists",
-              audience: ["primary user or integrating system"],
-              capabilities: ["concrete user-visible or system capability"],
-              flow: [{ title: "short stage name", description: "what happens in this stage", modulePaths: ["exact supplied module path"] }],
-              risks: ["project-level engineering risk"],
+              summary: "two or three plain-language sentences answering: what is this project and why does it exist?",
+              problem: "the real-world frustration, limitation, or unmet need this project addresses",
+              outcome: "the practical change or benefit a user gets after using it",
+              audience: ["plain-language description of a person or organization helped by the project"],
+              capabilities: ["something a user can accomplish with the project, phrased without implementation jargon"],
+              flow: [{ title: "short user-facing stage name", description: "what the person experiences or what conceptually happens, without code terminology", modulePaths: ["exact supplied module path used only as hidden supporting evidence"] }],
+              risks: ["user-relevant limitation, tradeoff, or important uncertainty; never a code-quality metric"],
               confidence: "low | medium | high",
-              evidence: [{ filePath: "exact supplied path", startLine: "number", endLine: "number", reason: "claim supported by this location" }]
+              evidence: [{ filePath: "exact supplied path", startLine: 1, endLine: 2, reason: "claim supported by this location" }]
             },
             repositoryName: input.repositoryName,
             languages: input.languages,
@@ -268,27 +301,28 @@ async function summarizeProjectWithLlm(input: {
       ]
     });
     const raw = response.choices[0]?.message?.content;
-    if (!raw) return fallback;
-    const parsed = projectOverviewSchema.parse(JSON.parse(raw));
+    if (!raw) throw new Error("The model returned an empty Big Picture");
+    const parsed = projectOverviewSchema.parse(normalizeProjectOverviewCandidate(JSON.parse(raw)));
     const flow = parsed.flow.map((step) => ({ ...step, modulePaths: step.modulePaths.filter((modulePath) => modulePaths.has(modulePath)) }));
     const evidence = parsed.evidence
       .filter((item) => evidenceSources.has(item.filePath) && item.startLine <= item.endLine && item.startLine <= evidenceSources.get(item.filePath)!)
       .map((item) => ({ ...item, endLine: Math.min(item.endLine, evidenceSources.get(item.filePath)!) }));
-    return { ...parsed, flow, evidence: evidence.length ? evidence : fallback.evidence, generatedBy: "deepseek-v4-flash" };
-  } catch {
-    return fallback;
+    return { ...parsed, flow, evidence: evidence.length ? evidence : fallback.evidence, generatedBy: model };
+  } catch (error) {
+    throw llmFailure("The LLM could not produce the required Big Picture analysis", error);
   }
 }
 
 async function summarizeDiagramWithLlm(input: {
+  overview: ProjectOverview;
   modules: AnalyzedModule[];
   edges: DependencyEdge[];
   sourceFiles: IndexedFile[];
   contextFiles: ProjectContextFile[];
 }): Promise<RepositoryDiagram> {
-  const fallback = buildFallbackRepositoryDiagram({ modules: input.modules, edges: input.edges });
   const apiKey = process.env.LLM_API_KEY ?? process.env.CKEY_API_KEY;
-  if (!apiKey) return fallback;
+  if (!apiKey) throw new Error("Big Picture concept mapping requires LLM_API_KEY or CKEY_API_KEY");
+  const model = configuredModel();
   try {
     const knownModulePaths = new Set(input.modules.map((module) => module.path));
     const evidenceSources = new Map([
@@ -301,21 +335,31 @@ async function summarizeDiagramWithLlm(input: {
     const internalEdges = input.edges.filter((edge) => knownModulePaths.has(edge.source) && knownModulePaths.has(edge.target)).slice(0, 240);
     const client = new OpenAI({ apiKey, baseURL: process.env.LLM_BASE_URL ?? process.env.CKEY_BASE_URL ?? "https://api.xah.io/v1" });
     const response = await client.chat.completions.create({
-      model: process.env.LLM_MODEL ?? "deepseek-v4-flash",
+      model,
       temperature: 0.1,
       response_format: { type: "json_object" },
       messages: [
-        { role: "system", content: "You are a careful software architect. Return only valid JSON matching the requested shape. Group source modules into a small, readable semantic data-flow diagram. Never invent a database, actor, service, artifact, transformation, or relationship that is not supported by the supplied evidence. Use inferred provenance when the evidence is indirect." },
+        {
+          role: "system",
+          content: "You create small concept maps for people who do not know how software is built. Visualize the user, the problem or input they start with, the project's main action, and the useful outcome. Labels and descriptions must use ordinary product language, never filenames, modules, frameworks, infrastructure, or architecture jargon. Return only valid JSON matching the requested shape. Every concept must be supported by the supplied project context or source evidence; mark indirect interpretations as inferred."
+        },
         {
           role: "user",
           content: JSON.stringify({
-            task: "Create a semantic data-flow architecture diagram for an unfamiliar repository.",
+            task: "Create a 3 to 7 node plain-language concept map that visually explains how this project's purpose connects a user's problem to an outcome. Use actor for the person, boundary for the problem or starting input, transform/service for the project's action, and artifact for the useful outcome. This will be rendered as a Mermaid flowchart in the Big Picture view.",
             shape: {
-              description: "one sentence explaining the diagram's scope",
-              nodes: [{ id: "stable-slug", label: "short node name", kind: "actor | service | worker | store | artifact | transform | boundary", description: "what this area does", modulePaths: ["exact supplied module path"], evidence: [{ filePath: "exact path", startLine: "number", endLine: "number", reason: "support" }], provenance: "observed | inferred", confidence: "low | medium | high" }],
-              relationships: [{ id: "source-to-target", source: "node id", target: "node id", kind: "depends-on | reads | writes | transforms | publishes | calls", label: "short verb phrase", evidence: [{ filePath: "exact path", startLine: "number", endLine: "number", reason: "support" }], provenance: "observed | inferred", confidence: "low | medium | high" }],
-              generatedBy: "deepseek-v4-flash",
+              description: "one plain-language sentence explaining the concept map",
+              nodes: [{ id: "stable-slug", label: "two to five plain-language words", kind: "actor | service | transform | artifact | boundary", description: "one short nontechnical sentence", modulePaths: ["exact supplied module path used only as hidden evidence"], evidence: [{ filePath: "exact path", startLine: 1, endLine: 2, reason: "support" }], provenance: "observed | inferred", confidence: "low | medium | high" }],
+              relationships: [{ id: "source-to-target", source: "node id", target: "node id", kind: "transforms | calls | publishes | reads | writes | depends-on", label: "short everyday verb phrase", evidence: [{ filePath: "exact path", startLine: 1, endLine: 2, reason: "support" }], provenance: "observed | inferred", confidence: "low | medium | high" }],
+              generatedBy: "configured LLM model",
               confidence: "low | medium | high"
+            },
+            bigPicture: {
+              summary: input.overview.summary,
+              problem: input.overview.problem,
+              outcome: input.overview.outcome,
+              audience: input.overview.audience,
+              capabilities: input.overview.capabilities
             },
             modules: importantModules.map((module) => ({ path: module.path, cluster: module.cluster, purpose: module.summary.purpose, responsibilities: module.summary.responsibilities.slice(0, 4), dependencies: module.summary.dependencies.slice(0, 6), metrics: module.metric, evidence: module.summary.evidence?.slice(0, 2) ?? [] })),
             internalEdges,
@@ -325,22 +369,22 @@ async function summarizeDiagramWithLlm(input: {
       ]
     });
     const raw = response.choices[0]?.message?.content;
-    if (!raw) return fallback;
-    const parsed = repositoryDiagramSchema.parse(JSON.parse(raw));
+    if (!raw) throw new Error("The model returned an empty concept map");
+    const parsed = repositoryDiagramSchema.parse(normalizeRepositoryDiagramCandidate(JSON.parse(raw)));
     const nodes = parsed.nodes.map((node) => {
       const modulePaths = node.modulePaths.filter((modulePath) => knownModulePaths.has(modulePath));
       const evidence = node.evidence.filter((item) => evidenceSources.has(item.filePath) && item.startLine <= item.endLine && item.startLine <= evidenceSources.get(item.filePath)!).map((item) => ({ ...item, endLine: Math.min(item.endLine, evidenceSources.get(item.filePath)!) }));
       return { ...node, modulePaths, evidence, provenance: node.provenance === "observed" && evidence.length ? "observed" as const : "inferred" as const };
-    }).filter((node) => node.modulePaths.length > 0);
-    if (nodes.length < 2) return fallback;
+    }).filter((node) => node.modulePaths.length > 0 || node.evidence.length > 0);
+    if (nodes.length < 2) throw new Error("The model did not return enough evidence-backed concepts");
     const nodeIds = new Set(nodes.map((node) => node.id));
     const relationships = parsed.relationships.filter((relationship) => nodeIds.has(relationship.source) && nodeIds.has(relationship.target) && relationship.source !== relationship.target).map((relationship) => {
       const evidence = relationship.evidence.filter((item) => evidenceSources.has(item.filePath) && item.startLine <= item.endLine && item.startLine <= evidenceSources.get(item.filePath)!).map((item) => ({ ...item, endLine: Math.min(item.endLine, evidenceSources.get(item.filePath)!) }));
       return { ...relationship, evidence, provenance: relationship.provenance === "observed" && evidence.length ? "observed" as const : "inferred" as const };
     });
-    return { ...parsed, nodes, relationships, generatedBy: "deepseek-v4-flash" };
-  } catch {
-    return fallback;
+    return { ...parsed, nodes, relationships, generatedBy: model };
+  } catch (error) {
+    throw llmFailure("The LLM could not produce the required Big Picture concept map", error);
   }
 }
 
@@ -359,6 +403,7 @@ async function summarizeSystemDesignWithLlm(input: {
   });
   const apiKey = process.env.LLM_API_KEY ?? process.env.CKEY_API_KEY;
   if (!apiKey) return fallback;
+  const model = configuredModel();
 
   try {
     const knownModulePaths = new Set(input.modules.map((module) => module.path));
@@ -372,7 +417,7 @@ async function summarizeSystemDesignWithLlm(input: {
     const internalEdges = input.edges.filter((edge) => knownModulePaths.has(edge.source)).slice(0, 280);
     const client = new OpenAI({ apiKey, baseURL: process.env.LLM_BASE_URL ?? process.env.CKEY_BASE_URL ?? "https://api.xah.io/v1" });
     const response = await client.chat.completions.create({
-      model: process.env.LLM_MODEL ?? "deepseek-v4-flash",
+      model,
       temperature: 0.1,
       response_format: { type: "json_object" },
       messages: [
@@ -386,10 +431,10 @@ async function summarizeSystemDesignWithLlm(input: {
             task: "Describe the repository's system design: logical containers, workers, stores, queues, actors, external systems, boundaries, and the relationships between them.",
             shape: {
               description: "one sentence explaining the logical system-design view",
-              boundaries: [{ id: "system", label: "Analyzed system", description: "boundary description", kind: "system | external", evidence: [{ filePath: "exact path", startLine: "number", endLine: "number", reason: "support" }], provenance: "observed | inferred", confidence: "low | medium | high" }],
-              nodes: [{ id: "stable-slug", label: "short element name", kind: "actor | container | worker | store | queue | external-system", description: "responsibility", technology: "optional technology", boundaryId: "known boundary id", modulePaths: ["exact supplied module path"], evidence: [{ filePath: "exact path", startLine: "number", endLine: "number", reason: "support" }], provenance: "observed | inferred", confidence: "low | medium | high" }],
-              relationships: [{ id: "source-to-target", source: "node id", target: "node id", kind: "calls | publishes | reads | writes | depends-on", label: "short verb phrase", protocol: "optional protocol", evidence: [{ filePath: "exact path", startLine: "number", endLine: "number", reason: "support" }], provenance: "observed | inferred", confidence: "low | medium | high" }],
-              generatedBy: "deepseek-v4-flash",
+              boundaries: [{ id: "system", label: "Analyzed system", description: "boundary description", kind: "system | external", evidence: [{ filePath: "exact path", startLine: 1, endLine: 2, reason: "support" }], provenance: "observed | inferred", confidence: "low | medium | high" }],
+              nodes: [{ id: "stable-slug", label: "short element name", kind: "actor | container | worker | store | queue | external-system", description: "responsibility", technology: "optional technology", boundaryId: "known boundary id", modulePaths: ["exact supplied module path"], evidence: [{ filePath: "exact path", startLine: 1, endLine: 2, reason: "support" }], provenance: "observed | inferred", confidence: "low | medium | high" }],
+              relationships: [{ id: "source-to-target", source: "node id", target: "node id", kind: "calls | publishes | reads | writes | depends-on", label: "short verb phrase", protocol: "optional protocol", evidence: [{ filePath: "exact path", startLine: 1, endLine: 2, reason: "support" }], provenance: "observed | inferred", confidence: "low | medium | high" }],
+              generatedBy: "configured LLM model",
               confidence: "low | medium | high"
             },
             repositoryName: input.repositoryName,
@@ -410,16 +455,20 @@ async function summarizeSystemDesignWithLlm(input: {
     });
     const raw = response.choices[0]?.message?.content;
     if (!raw) return fallback;
-    const parsed = repositorySystemDesignSchema.parse(JSON.parse(raw)) as RepositorySystemDesign;
+    const parsed = repositorySystemDesignSchema.parse(normalizeRepositorySystemDesignCandidate(JSON.parse(raw))) as RepositorySystemDesign;
     const normalized = normalizeSystemDesign(parsed, knownModulePaths, evidenceSources);
     if (normalized.boundaries.length < 1 || normalized.nodes.length < 2) return fallback;
-    return { ...normalized, generatedBy: "deepseek-v4-flash" };
+    return { ...normalized, generatedBy: model };
   } catch {
     return fallback;
   }
 }
 
 export async function analyzeRepository(input: { repositoryUrl: string; id: string }, onProgress: Progress): Promise<AnalysisReport> {
+  if (!(process.env.LLM_API_KEY ?? process.env.CKEY_API_KEY)) {
+    throw new Error("An LLM API key is required to analyze a repository and explain its Big Picture");
+  }
+  configuredModel();
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "codebase-analyzer-"));
   try {
     onProgress("cloning", 12, "Cloning a detached snapshot");
@@ -430,7 +479,7 @@ export async function analyzeRepository(input: { repositoryUrl: string; id: stri
     onProgress("indexing", 30, "Indexing source files and imports");
     const files = await listSourceFiles(workspace);
     const projectContext = await readProjectContext(workspace);
-    if (!files.length) throw new Error("No JS, TS, or Python source files were found");
+    if (!files.length) throw new Error("No analyzable text source files were found");
     const paths = new Set(files.map((file) => file.path));
 
     onProgress("graphing", 48, "Drawing the dependency graph");
@@ -465,7 +514,7 @@ export async function analyzeRepository(input: { repositoryUrl: string; id: stri
 
     const configuredSummaryConcurrency = Number(process.env.LLM_CONCURRENCY ?? 4);
     const summaryConcurrency = Math.min(8, Math.max(1, Math.floor(configuredSummaryConcurrency) || 1));
-    onProgress("summarizing", 76, `Explaining ${files.length} modules with ${summaryConcurrency} workers`);
+    onProgress("summarizing", 76, `Reading project behavior across ${files.length} source files`);
     let completedSummaries = 0;
     let lastSummaryProgress = 75;
     await mapWithConcurrency(files, summaryConcurrency, async (file) => {
@@ -475,17 +524,17 @@ export async function analyzeRepository(input: { repositoryUrl: string; id: stri
       completedSummaries += 1;
       const summaryProgress = 76 + Math.floor((completedSummaries / files.length) * 17);
       if (summaryProgress > lastSummaryProgress) {
-        onProgress("summarizing", summaryProgress, `Explained ${completedSummaries} of ${files.length} modules`);
+        onProgress("summarizing", summaryProgress, `Read ${completedSummaries} of ${files.length} source files`);
         lastSummaryProgress = summaryProgress;
       }
     });
 
     const repositoryName = input.repositoryUrl.split("/").slice(-2).join("/");
     const languages = [...new Set(files.map((file) => file.language))];
-    onProgress("summarizing", 95, "Synthesizing the project big picture");
+    onProgress("summarizing", 95, "Explaining the project's purpose and problem");
     const overview = await summarizeProjectWithLlm({ repositoryName, languages, modules, edges: rawEdges, sourceFiles: files, contextFiles: projectContext });
-    onProgress("summarizing", 97, "Mapping semantic architecture nodes");
-    const diagram = await summarizeDiagramWithLlm({ modules, edges: rawEdges, sourceFiles: files, contextFiles: projectContext });
+    onProgress("summarizing", 97, "Visualizing the project as a concept map");
+    const diagram = await summarizeDiagramWithLlm({ overview, modules, edges: rawEdges, sourceFiles: files, contextFiles: projectContext });
     onProgress("summarizing", 98, "Synthesizing system design architecture");
     const systemDesign = await summarizeSystemDesignWithLlm({ repositoryName, modules, edges: rawEdges, sourceFiles: files, contextFiles: projectContext });
 

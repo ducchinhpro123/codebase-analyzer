@@ -23,9 +23,10 @@ relationships explicitly.
 - Shareable, unlisted report URLs
 - Live analysis progress over server-sent events
 
-JavaScript, TypeScript, and Python repositories are supported. AI summaries are
-optional: without an API key, Tracepath produces deterministic fallback
-summaries from the static analysis.
+Repositories in any text-based programming language are supported, including
+mixed-language codebases and files with unfamiliar source extensions. An LLM
+API key is required for new analyses because the plain-language Big Picture and
+its Mermaid concept map are generated from an evidence-backed model reading.
 
 ## Quick start
 
@@ -43,9 +44,9 @@ npm run dev
 Open <http://localhost:3000>. Paste a public GitHub repository URL or explore
 the built-in report at <http://localhost:3000/report/demo>.
 
-## Optional AI summaries
+## LLM configuration
 
-Set an OpenAI-compatible endpoint in `.env.local`:
+Set an OpenAI-compatible endpoint in `.env.local` before running an analysis:
 
 ```dotenv
 LLM_API_KEY=your-key-here
@@ -54,9 +55,11 @@ LLM_MODEL=your-model
 LLM_CONCURRENCY=4
 ```
 
-The model receives bounded source context and returns structured module
+The model receives bounded repository context and returns the plain-language
+project purpose, problem, outcome, user journey, concept map, and module
 summaries. Its output is validated before it enters a report; deterministic
-metrics and syntax relationships never depend on the model.
+metrics and syntax relationships never depend on the model. The built-in sample
+report remains available without an API key.
 
 ## Operating modes
 
@@ -118,7 +121,8 @@ conservative.
 Tracepath treats analyzed repositories as untrusted input.
 
 - It never builds or executes repository code.
-- It reads only bounded JS, TS, and Python source from a detached clone.
+- It reads only bounded text source from a detached clone; binary assets,
+  prose documentation, lockfiles, and common generated directories are skipped.
 - Repository size and source-file counts are capped through environment settings.
 - Temporary clones are removed when analysis finishes.
 - User input and model responses are schema-validated.
@@ -144,6 +148,7 @@ and GitHub URL normalization.
 - Only public GitHub repositories are accepted.
 - Static relationships are architectural evidence, not proof of runtime order.
 - System-design containers and integrations are logical, evidence-backed interpretations; they are not a deployment topology or runtime trace.
-- Language coverage currently focuses on JavaScript, TypeScript, and Python.
+- Import extraction is deepest for JavaScript, TypeScript, and Python; other
+  languages still receive module, metric, hotspot, evidence, and AI analysis.
 - The default Compose credentials are for local development and must be
   replaced before any public deployment.
