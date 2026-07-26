@@ -98,13 +98,13 @@ test("normalizes inferred system-design claims and preserves exportability", () 
   assert.match(diagramToDrawio(diagram, { name: "System design architecture" }), /System design architecture/);
 });
 
-test("projects the system-design model into a dark Mermaid flowchart with boundaries", () => {
+test("projects the system-design model into a Mermaid flowchart with boundaries", () => {
   const design = demoReport.systemDesign!;
   const source = systemDesignToMermaid(design);
 
   assert.match(source, /^flowchart LR/);
   assert.match(source, /subgraph .+\["Tracepath"\]/);
-  assert.match(source, /classDef container fill:#171d20/);
+  assert.match(source, /classDef container fill:#f1f3ef,stroke:#14505c/);
   assert.match(source, /enqueues analysis/);
   assert.doesNotMatch(source, /app\/page\.tsx/);
 });

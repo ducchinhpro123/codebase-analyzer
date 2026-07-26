@@ -171,10 +171,10 @@ export function repositoryDiagramToMermaid(diagram: RepositoryDiagram) {
     lines.push(`  ${source} -->|"${mermaidText(relationship.label, 64)}"| ${target}`);
   }
 
-  lines.push("  classDef person fill:#20251b,stroke:#c7ff3d,color:#f2f1ec,stroke-width:2px");
-  lines.push("  classDef problem fill:#251d1b,stroke:#e18b73,color:#f2f1ec,stroke-width:1.5px");
-  lines.push("  classDef concept fill:#171d20,stroke:#71808a,color:#f2f1ec,stroke-width:1.5px");
-  lines.push("  classDef outcome fill:#18241e,stroke:#72b58b,color:#f2f1ec,stroke-width:1.5px");
+  lines.push("  classDef person fill:#f8faf7,stroke:#14505c,color:#15201e,stroke-width:2px");
+  lines.push("  classDef problem fill:#f0dcdd,stroke:#8c2f39,color:#15201e,stroke-width:1.5px");
+  lines.push("  classDef concept fill:#f1f3ef,stroke:#57625e,color:#15201e,stroke-width:1.5px");
+  lines.push("  classDef outcome fill:#dbe7e9,stroke:#14505c,color:#15201e,stroke-width:1.5px");
   return lines.join("\n");
 }
 

@@ -24,6 +24,7 @@ import {
   GitCommit,
   GithubLogo,
   Graph,
+  Info,
   MagnifyingGlass,
   ShareNetwork,
   SpinnerGap,
@@ -31,6 +32,7 @@ import {
 } from "@phosphor-icons/react";
 import { demoReport } from "@/lib/demo";
 import { diagramToDrawio } from "@/lib/diagram-export";
+import { describeGraphCoverage } from "@/lib/graph-coverage";
 import { shouldStartGraphDrag } from "@/lib/graph-interaction";
 import {
   buildGraphLayout,
@@ -52,6 +54,7 @@ import type {
   AnalyzedModule,
   DependencyEdge,
   DiagramNode,
+  GraphCoverage,
   ProjectOverview,
   RepositoryDiagram,
   RepositorySystemDesign,
@@ -428,28 +431,20 @@ function HeroPreview() {
   const selected =
     modules.find((module) => module.path === selectedPath) ?? modules[0];
   return (
-    <div
-      className="instrument-preview"
+    <figure
+      className="preview"
       aria-label="Interactive architecture report preview"
     >
-      <div className="instrument-preview-header">
-        <div className="instrument-repository">
+      <figcaption className="preview-caption">
+        <span className="preview-repository">
           <GitCommit size={14} aria-hidden />
-          <span>EXPRESSJS / EXPRESS / MAIN: AE6DD37</span>
-        </div>
-        <div className="instrument-legend" aria-label="Graph legend">
-          <span>
-            <i className="is-observed" />
-            OBSERVED
-          </span>
-          <span>
-            <i />
-            INFERRED
-          </span>
-        </div>
-      </div>
-      <div className="instrument-graph">
-        <div className="instrument-scan-line" aria-hidden />
+          {demoReport.repositoryName}
+        </span>
+        <span className="preview-commit">
+          {demoReport.branch} · {shortSha(demoReport.commitSha)}
+        </span>
+      </figcaption>
+      <div className="preview-graph">
         <GraphCanvas
           modules={modules}
           edges={demoReport.edges}
@@ -458,22 +453,21 @@ function HeroPreview() {
           compact
         />
       </div>
-      <div className="instrument-selection">
-        <div className="instrument-selected-file">
+      <div className="preview-selection">
+        <p className="preview-path">
           <FileCode size={15} aria-hidden />
           <code>{selected.path}</code>
-        </div>
-        <div className="instrument-selection-copy">
-          <p>{cleanText(selected.summary.purpose)}</p>
-          <span>
-            CONFIDENCE: {selected.summary.confidence.toUpperCase()}
-            <br />
-            SYNTHESIS:{" "}
-            {modelLabel(selected.summary.generatedBy).toUpperCase()}
-          </span>
-        </div>
+        </p>
+        <p className="preview-purpose">{cleanText(selected.summary.purpose)}</p>
+        <p className="preview-provenance">
+          <i
+            className={`mark mark-${selected.summary.generatedBy === "deterministic-fallback" ? "observed" : "inferred"}`}
+            aria-hidden
+          />
+          {modelLabel(selected.summary.generatedBy)} · {selected.summary.confidence} confidence
+        </p>
       </div>
-    </div>
+    </figure>
   );
 }
 
@@ -538,6 +532,32 @@ function AnalysisProgress({ job }: { job: AnalysisJob }) {
         </div>
       ) : null}
     </div>
+  );
+}
+
+/**
+ * Explain how much of the repository the graph could actually be built from.
+ *
+ * Without this, a repository written mostly in a language whose imports cannot
+ * be read shows a sparse graph that reads as a finding about the code rather
+ * than a limit of the analysis.
+ */
+function GraphCoverageNote({ coverage }: { coverage?: GraphCoverage }) {
+  const notice = describeGraphCoverage(coverage);
+  if (!notice) return null;
+  const named = notice.languages.slice(0, 4);
+
+  return (
+    <p className="graph-coverage">
+      <Info size={15} aria-hidden />
+      <span>
+        Imports were read from {notice.filesWithImportSupport} of {notice.filesRead} files
+        {" "}({notice.sharePercent}%). {notice.unreadFiles} file{notice.unreadFiles === 1 ? "" : "s"} in
+        {" "}{named.join(", ")}
+        {notice.languages.length > named.length ? ` and ${notice.languages.length - named.length} more` : ""}
+        {" "}contribute no edges, so the graph is thinner than the repository.
+      </span>
+    </p>
   );
 }
 
@@ -792,6 +812,36 @@ function SystemDesignExports({
   );
 }
 
+/**
+ * Draw diagrams in the page's own ink rather than a fixed palette.
+ *
+ * Reading the tokens back off the document keeps the rendered SVG in step with
+ * the light and dark stock, and keeps the exported diagram matching what the
+ * reader saw.
+ */
+function readTheme() {
+  const styles = getComputedStyle(document.documentElement);
+  const token = (name: string, fallback: string) => styles.getPropertyValue(name).trim() || fallback;
+  const sheet = token("--sheet-raised", "#f8f9f6");
+  const ink = token("--ink", "#15201e");
+  const rule = token("--rule-strong", "#a3aea6");
+
+  return {
+    background: sheet,
+    primaryColor: token("--sheet", "#f1f3ef"),
+    primaryTextColor: ink,
+    primaryBorderColor: token("--observed", "#14505c"),
+    secondaryColor: token("--observed-wash", "#dbe7e9"),
+    tertiaryColor: sheet,
+    lineColor: token("--ink-faint", "#57625e"),
+    clusterBkg: token("--film-deep", "#d2d9d2"),
+    clusterBorder: rule,
+    edgeLabelBackground: sheet,
+    fontFamily: "var(--font-data), monospace",
+    fontSize: "13px",
+  };
+}
+
 function MermaidCanvas({
   source,
   renderName,
@@ -827,19 +877,7 @@ function MermaidCanvas({
             rankSpacing: 72,
             useMaxWidth: true,
           },
-          themeVariables: {
-            background: "#101517",
-            primaryColor: "#171d20",
-            primaryTextColor: "#f2f4f3",
-            primaryBorderColor: "#71808a",
-            secondaryColor: "#172322",
-            tertiaryColor: "#101517",
-            lineColor: "#89969e",
-            clusterBkg: "#111719",
-            clusterBorder: "#38454c",
-            edgeLabelBackground: "#101517",
-            fontFamily: "var(--font-geist-mono), monospace",
-          },
+          themeVariables: readTheme(),
         });
         const rendered = await mermaid.render(
           `${renderName}-${renderId}`,
@@ -959,12 +997,10 @@ function ProjectOverviewView({
         </div>
         <div className="project-questions">
           <article>
-            <span>01 · The need</span>
             <h3>What problem does it solve?</h3>
             <p>{cleanText(overview.problem)}</p>
           </article>
           <article>
-            <span>02 · The result</span>
             <h3>What changes for the user?</h3>
             <p>{cleanText(overview.outcome)}</p>
           </article>
@@ -1505,6 +1541,7 @@ function ReportView({ report }: { report: AnalysisReport }) {
                 </div>
                 <span>{visibleModules.length} shown</span>
               </div>
+              <GraphCoverageNote coverage={report.graphCoverage} />
               <GraphCanvas
                 modules={visibleModules}
                 edges={report.edges}
@@ -1591,6 +1628,58 @@ function ReportError({ message }: { message: string }) {
   );
 }
 
+/**
+ * The page states its own claims the way a report does.
+ *
+ * Each line points at the file in this repository that supports it, and the
+ * last one admits it has nothing to point at. A product whose argument is
+ * calibrated confidence cannot open by overclaiming.
+ */
+const heroClaims: { text: string; file?: string; lines?: string }[] = [
+  {
+    text: "Every architectural claim carries the source range it was drawn from.",
+    file: "lib/analyzer.ts",
+    lines: "254-258",
+  },
+  {
+    text: "Imports are read in 26 languages, so the map is not only a JavaScript map.",
+    file: "lib/imports.ts",
+    lines: "175-202",
+  },
+  {
+    text: "Complexity and coupling are measured, never asked of the model.",
+    file: "lib/analyzer.ts",
+    lines: "137-142",
+  },
+  {
+    text: "A repository at an unchanged commit is served from the report already written for it.",
+    file: "lib/analysis-runner.ts",
+    lines: "29-33",
+  },
+  {
+    text: "Most people open the map before they read a word of the report.",
+  },
+];
+
+function RegisterLegend() {
+  return (
+    <dl className="register-legend" aria-label="How claims on this page are marked">
+      <div>
+        <dt>
+          <i className="mark mark-observed" aria-hidden />
+        </dt>
+        <dd>observed</dd>
+      </div>
+      <div>
+        <dt>
+          <i className="mark mark-inferred" aria-hidden />
+        </dt>
+        <dd>inferred</dd>
+      </div>
+    </dl>
+  );
+}
+
 function LandingPage({
   url,
   setUrl,
@@ -1607,111 +1696,97 @@ function LandingPage({
   isSubmitting: boolean;
 }) {
   return (
-    <main className="instrument-page">
-      <header className="instrument-header">
-        <div className="instrument-header-left">
+    <main className="page">
+      <header className="topbar">
+        <div className="topbar-left">
           <Brand />
-          <span className="instrument-divider" aria-hidden />
-          <a className="instrument-nav-link" href="/report/demo">
+          <span className="topbar-rule" aria-hidden />
+          <a className="topbar-link" href="/report/demo">
             Sample report
           </a>
         </div>
-        <div className="instrument-runtime" aria-label="Analyzer status">
-          <span>V4.2_STABLE</span>
-          <i />
-          ANALYZER_READY
-        </div>
+        <RegisterLegend />
       </header>
-      <div className="instrument-main">
-        <aside className="instrument-sidebar">
-          <div className="instrument-sidebar-copy">
-            <p className="instrument-kicker">Instrument status: Standby</p>
-            <h1>
-              Map the code.
-              <br />
-              Find the risk.
-            </h1>
-            <p className="instrument-summary">
-              Technical evidence-backed architecture reporting for complex
-              GitHub repositories.
-            </p>
-            <form className="instrument-form" onSubmit={submit}>
-              <div className="instrument-field-label">
-                <label htmlFor="repository-url">Repository target</label>
-              </div>
-              <div className="instrument-repository-field">
-                <div className="instrument-field-icon">
-                  <GithubLogo size={16} weight="fill" aria-hidden />
-                </div>
-                <input
-                  id="repository-url"
-                  value={url}
-                  onChange={(event) => setUrl(event.target.value)}
-                  placeholder="github.com/owner/repo"
-                  autoComplete="url"
-                  spellCheck={false}
-                />
-                <button
-                  type="submit"
-                  disabled={
-                    isSubmitting || Boolean(job && job.status !== "failed")
-                  }
-                >
-                  {isSubmitting ? "Starting" : "Analyze"}
-                </button>
-              </div>
-              <p className="instrument-form-helper">
-                Any text-based language · LLM explanation · Max 100MB
-              </p>
-              {error ? (
-                <p className="instrument-form-error">
-                  <WarningCircle size={15} aria-hidden />
-                  {error}
+      <div className="hero">
+        <div className="hero-argument">
+          <h1>
+            Map the code.
+            <br />
+            Find the risk.
+          </h1>
+          <p className="hero-lede">
+            Tracepath reads a public GitHub repository and returns an
+            architecture report. Every claim below is marked with where it came
+            from, including the one it cannot prove.
+          </p>
+          <div className="apparatus">
+            <div className="apparatus-row apparatus-head" aria-hidden>
+              <p className="apparatus-cite">Source</p>
+              <p className="apparatus-claim">Claim</p>
+            </div>
+            {heroClaims.map((claim) => (
+              <div
+                className={`apparatus-row ${claim.file ? "is-observed" : "is-inferred"}`}
+                key={claim.text}
+              >
+                <p className="apparatus-cite">
+                  {claim.file ? (
+                    <code>{claim.file}</code>
+                  ) : (
+                    <em className="apparatus-unanchored">no anchor</em>
+                  )}
+                  <span className="apparatus-range">
+                    {claim.lines ?? "inferred"}
+                    <i
+                      className={`mark mark-${claim.file ? "observed" : "inferred"}`}
+                      aria-hidden
+                    />
+                  </span>
                 </p>
-              ) : null}
-            </form>
+                <p className="apparatus-claim">{claim.text}</p>
+              </div>
+            ))}
           </div>
-          <div
-            className="instrument-capabilities"
-            aria-label="Analysis capabilities"
-          >
-            <article>
-              <Graph size={18} aria-hidden />
-              <div>
-                <h2>Topology map</h2>
-                <p>Full module adjacency matrix graphing.</p>
-              </div>
-            </article>
-            <article>
-              <GitBranch size={18} aria-hidden />
-              <div>
-                <h2>Static trace</h2>
-                <p>Import resolution and cycle detection.</p>
-              </div>
-            </article>
-            <article>
-              <WarningCircle size={18} aria-hidden />
-              <div>
-                <h2>Risk signals</h2>
-                <p>Complexity hotspots and debt surfacing.</p>
-              </div>
-            </article>
-          </div>
-        </aside>
-        <section
-          className="instrument-canvas"
-          aria-label="Tracepath analysis instrument"
-        >
+          <form className="repo-form" onSubmit={submit}>
+            <label htmlFor="repository-url">Repository</label>
+            <div className="repo-field">
+              <GithubLogo size={16} weight="fill" aria-hidden />
+              <input
+                id="repository-url"
+                value={url}
+                onChange={(event) => setUrl(event.target.value)}
+                placeholder="github.com/owner/repo"
+                autoComplete="url"
+                spellCheck={false}
+              />
+              <button
+                type="submit"
+                disabled={
+                  isSubmitting || Boolean(job && job.status !== "failed")
+                }
+              >
+                {isSubmitting ? "Starting" : "Analyze"}
+              </button>
+            </div>
+            <p className="repo-help">
+              Public repositories · up to 100 MB of source · an LLM writes the
+              prose, not the measurements
+            </p>
+            {error ? (
+              <p className="repo-error">
+                <WarningCircle size={15} aria-hidden />
+                {error}
+              </p>
+            ) : null}
+          </form>
+        </div>
+        <section className="hero-artifact" aria-label="Report preview">
           {job ? <AnalysisProgress job={job} /> : <HeroPreview />}
         </section>
       </div>
-      <footer className="instrument-footer">
-        <span>© TRACEPATH_ENGINEERING_CORP</span>
-        <div>
-          <span>LOC: 48,291</span>
-          <span>EDGES: 1,022</span>
-          <span>RUNTIME: 142MS</span>
-        </div>
+      <footer className="footer">
+        <span>Tracepath</span>
+        <span>Shared reports use an unlisted link, not a private one.</span>
       </footer>
     </main>
   );

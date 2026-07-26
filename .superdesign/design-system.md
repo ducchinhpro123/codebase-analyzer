@@ -9,105 +9,93 @@ Tracepath turns a public GitHub repository into an evidence-backed architecture 
 3. Let a developer understand a codebase at three levels: system overview, dependency map, and individual module evidence.
 4. Surface risk without pretending that machine-generated summaries are unquestionable.
 
-The audience is technical: staff engineers, consultants, maintainers, and developers entering an unfamiliar repository. The interface should feel like a serious analysis instrument, not a generic SaaS landing page.
+The audience is technical: staff engineers, consultants, maintainers, and developers entering an unfamiliar repository.
 
-## Visual direction: technical field instrument
+## Visual direction: survey document
 
-Use a precise, editorial developer-tool aesthetic: dark graphite workspace, paper-white reading surfaces, thin structural rules, compact monospace metadata, and a single high-visibility signal color. The product should evoke a well-made oscilloscope, source browser, and printed engineering field guide.
+The product's argument is calibrated confidence. It shows where every claim came from and marks the ones it cannot prove. The interface makes the same argument structurally, so the design is a document you would trust rather than a dashboard.
 
-Avoid glossy gradient blobs, glassmorphism, oversized rounded cards, purple/blue startup gradients, decorative 3D art, fake terminal chrome, and generic dashboard card grids.
+The ground is drafting film: a cool grey-green, never cream and never near-black. Reading surfaces are pale sheets laid on that film, separated by hairline rules and tonal shift rather than shadow. The page does not float.
 
-## Color
+**One ink, two renderings.** Observed is solid and filled. Inferred is the same ink, dashed and hollow, because an inference is not a different kind of thing — it is the same claim with less support. This pair is the system's core primitive and applies to marks, badges, rules, and graph edges alike.
 
-### Core
+Avoid: gradient blobs, glassmorphism, oversized rounded cards, fabricated telemetry or invented metrics, decorative numbering on content that is not a sequence, and any accent colour used as brand decoration rather than meaning.
 
-- `canvas`: `#0B0D0E`
-- `canvas-raised`: `#111416`
-- `panel`: `#171B1E`
-- `panel-hover`: `#1D2226`
-- `paper`: `#F1F0EA`
-- `paper-muted`: `#E4E2D9`
-- `ink-on-paper`: `#111315`
-- `text-primary`: `#F2F1EC`
-- `text-secondary`: `#A4ADB2`
-- `text-faint`: `#6F797F`
-- `rule`: `#2B3236`
-- `rule-strong`: `#465157`
+## Signature: the apparatus
 
-### Signal
+The landing page states its claims the way the report does — a two-column apparatus with the source on the left and the claim on the right, divided by a continuous spine. Each claim points at the file and line range in this repository that supports it, and the last claim admits it has no anchor and is marked inferred.
 
-- `signal`: `#C7FF3D` — primary action, selected nodes, progress, and important counts
-- `signal-hover`: `#D7FF72`
-- `signal-ink`: `#10120C`
-- `warning`: `#FF6B4A`
-- `info`: `#65B8FF`
-- `success`: `#63D69B`
+Hovering a row marks its citation with the highlighter, in both directions. This is the one place boldness is spent; everything around it stays quiet.
 
-Graph relationships may use `#65B8FF`, `#63D69B`, `#C6A7FF`, `#FF9B66`, and `#E7D56B`, always against graphite and never as decorative gradients.
+Citations must be real. A claim whose anchor cannot be verified is either removed or moved to the inferred register.
+
+## Colour
+
+### Light (default)
+
+- `--film`: `#d3dbd4` — page ground
+- `--film-deep`: `#c7d0c8` — recessed bands
+- `--sheet`: `#f1f3ef` — panels and reading surfaces
+- `--sheet-raised`: `#f8faf7` — inputs, graph canvas
+- `--ink`: `#15201e` · `--ink-soft`: `#47534f` · `--ink-faint`: `#57625e`
+- `--rule`: `#c2cbc4` · `--rule-strong`: `#a3aea6`
+- `--observed`: `#14505c` — the one ink; links, actions, evidence, selection
+- `--observed-lift`: `#1c6c7c` · `--observed-wash`: `#dbe7e9`
+- `--risk`: `#8c2f39` — semantic only, never brand decoration
+- `--mark`: `#f5e27a` — highlighter, hover only, never a resting state
+
+Dark mode is the same document on dark stock: token overrides only, no structural change.
+
+Graph edge colours are a muted family derived from the ink (`--graph-edge-0…7`). The compact preview graph uses a single ink; multiple hues are noise below full size.
 
 ## Typography
 
-- Interface and display: Geist Sans only.
-- Code, repository paths, metrics, labels, and eyebrow text: Geist Mono only.
-- Hero display: 72–104px desktop, weight 560, line-height 0.92, letter-spacing `-0.07em`.
-- Page title: 42–64px, weight 560, line-height 1.
-- Section title: 22–32px, weight 580.
-- Body: 15–18px, line-height 1.55.
-- UI text: 12–14px.
-- Metadata: 10–12px Geist Mono, uppercase only for short system labels.
+Three voices, each doing one job.
 
-Do not introduce serif, handwriting, display, or additional web fonts.
+- **Archivo** (`--font-display`), variable width axis. Instrument voice. Display at `wdth` 116–120; controls, tabs, and panel headings at `wdth` 100–108.
+- **Spectral** (`--font-read`), serif. Human voice — body prose, claims, module explanations, report narrative. The product turns machine analysis into readable prose, and the type says so.
+- **IBM Plex Mono** (`--font-data`). Apparatus voice — paths, line ranges, metrics, eyebrows, legends.
+
+Scale: hero `clamp(40px, 4.7vw, 70px)`; report title `clamp(30px, 3.9vw, 54px)`; thesis `clamp(20px, 2.05vw, 29px)` in Spectral at weight 400; section headings 16–17px; body 14–16px; mono eyebrows 10–10.5px at `.13em` uppercase.
+
+Do not add a fourth family.
 
 ## Layout
 
-- Desktop canvas max width: 1520px with 28–40px outer gutters.
-- Use hard-working split layouts, not centered stacks.
-- Landing page: asymmetric 12-column composition. The value proposition and repository input own the left 5 columns; a live analysis artifact owns the right 7 columns and may bleed toward the viewport edge.
-- Report: persistent slim command bar, a compact repository identity band, then an analysis workspace. Use a rail / primary canvas / evidence inspector hierarchy.
-- Prefer borders and tonal shifts over floating shadows.
-- Use 1px structural rules to align sections across the page.
-- Dense areas may use 6px, 8px, 12px, and 16px spacing; narrative areas use 24px, 32px, 48px, 64px, and 96px.
+- Shell max width 1560px, gutters `clamp(20px, 3.4vw, 48px)`.
+- Landing: asymmetric two-column hero — argument left, live artifact right. The apparatus spine sits at `--cite-w` (156px desktop, stacked below 620px).
+- Report: slim sticky bar, repository identity band, tabs, then the workspace. Module map is rail / canvas / inspector.
+- Corners are restrained: 2px for marks, badges, and chips; 3px for controls and panels.
+- Prefer borders and tonal shifts over shadows. Use 1px rules to align sections.
 
 ## Components
 
-- Corners are restrained: 2px for labels and graph nodes, 4px for controls, 6px maximum for major panels.
-- Primary action: signal fill, dark ink, 44–52px tall, square-ish 4px radius, strong 650 label.
-- Secondary action: transparent or panel fill, 1px rule border, primary text.
-- Repository input: integrated command surface with GitHub icon, monospaced URL, and attached action. It should feel like an instrument control, not a rounded search pill.
-- Cards are rare. Prefer framed regions, rows, tables, rails, and clearly divided workspaces.
-- Selected states use signal color plus a visible border; never rely on a faint background alone.
-- Risk uses warm warning color and an explicit label.
-- Graph nodes use concise path labels, cluster/score metadata, and thin routed connectors.
+- Primary action: `--observed` fill, sheet text, 3px radius.
+- Secondary: sheet fill with a `--rule-strong` border; hover shifts border and text to `--observed`.
+- Repository input: an instrument control with the GitHub mark, monospaced URL, and attached action — not a rounded search pill.
+- Evidence blocks: 2px `--observed` left rule, mono path, prose reason.
+- Risk: `--risk` border and wash with an explicit label, never colour alone.
+- Cards are rare. Prefer framed regions, rows, rails, and divided workspaces.
 
 ## Motion
 
-- 140–220ms for hover, selection, and panel transitions.
-- Analysis progress may use a traveling scan line, stepped counters, and subtle node activation.
-- Graph hover may strengthen connected edges and lift the active node by 1–2px.
+- 160ms for hover, selection, and panel transitions.
+- One orchestrated moment: apparatus rows arrive in reading order, 60ms apart — the order a reader checks a citation.
 - No continuous ambient motion outside an active analysis.
-- Respect reduced motion; all state changes remain understandable without animation.
+- `prefers-reduced-motion: reduce` collapses all animation and transition.
 
-## Landing requirements
+## Writing
 
-- Keep the Tracepath name and braces mark recognizable.
-- Keep the exact product promise: “Map the code. Find the risk.”
-- Keep a repository URL field and a dominant Analyze action above the fold.
-- Keep a path to the sample report.
-- Show a believable interactive architecture artifact, not an abstract illustration.
-- Make supported languages/limits available without competing with the main action.
-- Maintain clear mobile stacking and a usable repository input at 360px.
-
-## Report requirements
-
-- Preserve both “Big picture” and “Module map” views.
-- Keep repository identity, branch, commit, modules, edges, and line totals prominent.
-- Preserve module filtering, architecture graph, hotspot ranking, evidence inspector, diagram exports, share, and new-analysis actions.
-- Keep evidence and confidence visible so generated explanations remain auditable.
+- Never display a metric the product did not measure. No invented version strings, runtimes, or line counts.
+- Never claim a capability the code does not implement.
+- Name things by what a person recognises, not how the system is built.
+- Number a list only when order carries information the reader needs. The user journey is a sequence; two parallel questions are not.
+- State limits plainly: graph coverage, unlisted share links, which prose came from a model.
 
 ## Accessibility
 
-- Minimum 4.5:1 contrast for body text and controls.
-- Signal green is never used as small text on paper-white.
-- Focus rings use a 2px signal outline with 2px offset.
+- Minimum 4.5:1 contrast for body text and controls. `--ink-faint` is the lightest text permitted on `--film`.
+- Focus rings: 2px `--observed` outline at 2px offset.
+- Provenance is never conveyed by colour alone — the observed and inferred marks differ in fill and border style, and carry text labels in the legend.
 - Interactive graph nodes retain keyboard focus and labels.
-- Target size is at least 40px for controls; dense report rows may be 36px when clearly separated.
+- Controls are at least 36px tall; dense report rows may be smaller when clearly separated.

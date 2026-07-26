@@ -323,12 +323,12 @@ export function systemDesignToMermaid(design: RepositorySystemDesign) {
     lines.push(`  ${source} -->|"${mermaidText(`${relationship.label}${protocol}`, 72)}"| ${target}`);
   }
 
-  lines.push("  classDef container fill:#171d20,stroke:#71808a,color:#f2f4f3,stroke-width:1.5px");
-  lines.push("  classDef worker fill:#182027,stroke:#6f88a1,color:#f2f4f3,stroke-width:1.5px");
-  lines.push("  classDef store fill:#172322,stroke:#6f958f,color:#f2f4f3,stroke-width:1.5px");
-  lines.push("  classDef queue fill:#1c1d2a,stroke:#8488ad,color:#f2f4f3,stroke-width:1.5px");
-  lines.push("  classDef actor fill:#242017,stroke:#a58c5b,color:#f2f4f3,stroke-width:1.5px");
-  lines.push("  classDef external fill:#241c18,stroke:#a87858,color:#f2f4f3,stroke-width:1.5px");
+  lines.push("  classDef container fill:#f1f3ef,stroke:#14505c,color:#15201e,stroke-width:1.5px");
+  lines.push("  classDef worker fill:#e8eeea,stroke:#4a6152,color:#15201e,stroke-width:1.5px");
+  lines.push("  classDef store fill:#dbe7e9,stroke:#14505c,color:#15201e,stroke-width:1.5px");
+  lines.push("  classDef queue fill:#eae7f0,stroke:#5b5470,color:#15201e,stroke-width:1.5px");
+  lines.push("  classDef actor fill:#f8faf7,stroke:#57625e,color:#15201e,stroke-width:1.5px");
+  lines.push("  classDef external fill:#f3ece6,stroke:#7a5c3e,color:#15201e,stroke-width:1.5px");
   return lines.join("\n");
 }
 
