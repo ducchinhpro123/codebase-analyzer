@@ -2,7 +2,7 @@ import type { AnalysisJob, AnalysisReport, AnalysisStage } from "./types";
 import { demoReport } from "./demo";
 import fs from "node:fs";
 import path from "node:path";
-import { persistJob, persistReport, readJob, readReport } from "./persistence";
+import { persistJob, persistReport, readJob, readReport, readReportByCommit } from "./persistence";
 
 // The store is intentionally small: the seam lets a Postgres adapter replace it
 // without changing the API or worker implementation. It is suitable for local
@@ -103,6 +103,16 @@ export function findReport(repositoryUrl: string, commitSha: string) {
   return [...reports.values()].find(
     (report) => report.repositoryUrl === repositoryUrl && report.commitSha === commitSha
   );
+}
+
+/**
+ * Look for a report already generated for this exact commit.
+ *
+ * A repository at an unchanged commit produces an unchanged report, so reusing
+ * it avoids re-cloning and re-reading the whole codebase.
+ */
+export async function findReportForCommit(repositoryUrl: string, commitSha: string) {
+  return findReport(repositoryUrl, commitSha) ?? (await readReportByCommit(repositoryUrl, commitSha));
 }
 
 export function stageMessage(stage: AnalysisStage) {

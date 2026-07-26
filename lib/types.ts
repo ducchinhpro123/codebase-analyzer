@@ -152,6 +152,15 @@ export type DependencyEdge = {
   line?: number;
 };
 
+export type GraphCoverage = {
+  filesRead: number;
+  filesWithImportSupport: number;
+  languagesWithImportSupport: Language[];
+  languagesWithoutImportSupport: Language[];
+  resolvedEdges: number;
+  unresolvedEdges: number;
+};
+
 export type AnalysisReport = {
   id: string;
   shareToken: string;
@@ -165,6 +174,7 @@ export type AnalysisReport = {
   modules: AnalyzedModule[];
   edges: DependencyEdge[];
   clusters: string[];
+  graphCoverage?: GraphCoverage;
   overview?: ProjectOverview;
   diagram?: RepositoryDiagram;
   systemDesign?: RepositorySystemDesign;

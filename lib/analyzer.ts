@@ -5,11 +5,16 @@ import os from "node:os";
 import path from "node:path";
 import { promisify } from "node:util";
 import OpenAI from "openai";
-import { parseJavaScriptImports } from "./ast";
 import { mapWithConcurrency } from "./concurrency";
+import { buildGraphCoverage } from "./graph-coverage";
+import { buildDependencyEdges } from "./dependency-graph";
+import { readGoModulePath } from "./import-resolution";
 import { buildFallbackProjectOverview } from "./project-overview";
 import { normalizeProjectOverviewCandidate, normalizeRepositoryDiagramCandidate, normalizeRepositorySystemDesignCandidate } from "./llm-normalization";
+import { isFetchableRepositoryLocation } from "./git-remote";
+import { buildDeterministicModuleSummary } from "./module-summary";
 import { isAnalyzableSourceFile, languageFor } from "./source-files";
+import { resolveSummaryBudget, selectModulesForLlmSummary } from "./summary-budget";
 import { buildFallbackSystemDesign, normalizeSystemDesign, type ArchitectureContextFile } from "./system-design";
 import { llmSummarySchema, projectOverviewSchema, repositoryDiagramSchema, repositorySystemDesignSchema } from "./validation";
 import type {
@@ -129,43 +134,6 @@ function readmeSummary(context: ProjectContextFile[]) {
   return prose?.slice(0, 700);
 }
 
-function importsFor(file: IndexedFile) {
-  const imports: { specifier: string; kind: DependencyEdge["kind"]; line: number }[] = [];
-  if (file.language === "python") {
-    for (const match of file.source.matchAll(/^\s*from\s+([\w.]+)\s+import|^\s*import\s+([\w.]+)/gm)) {
-      imports.push({ specifier: match[1] ?? match[2], kind: "from", line: file.source.slice(0, match.index ?? 0).split(/\r?\n/).length });
-    }
-  } else {
-    try {
-      return parseJavaScriptImports(file.source);
-    } catch {
-      for (const match of file.source.matchAll(/\bimport\s+(?:[^;]*?\s+from\s+)?["']([^"']+)["']|\brequire\(\s*["']([^"']+)["']\s*\)/g)) {
-        imports.push({ specifier: match[1] ?? match[2], kind: match[1] ? "import" : "require", line: file.source.slice(0, match.index ?? 0).split(/\r?\n/).length });
-      }
-    }
-  }
-  return imports;
-}
-
-function resolveImport(source: IndexedFile, specifier: string, paths: Set<string>) {
-  const relative = specifier.startsWith(".");
-  const pythonRelativeDepth = source.language === "python" && relative ? specifier.match(/^\.+/)?.[0].length ?? 0 : 0;
-  let sourceDirectory = path.posix.dirname(source.path);
-  for (let level = 1; level < pythonRelativeDepth; level += 1) sourceDirectory = path.posix.dirname(sourceDirectory);
-  const normalizedSpecifier = pythonRelativeDepth ? specifier.slice(pythonRelativeDepth).replace(/\./g, "/") : specifier;
-  const base = relative
-    ? path.posix.normalize(path.posix.join(sourceDirectory, normalizedSpecifier))
-    : source.language === "python"
-      ? specifier.replace(/\./g, "/")
-      : "";
-  if (!base) return undefined;
-  const candidates = [base, ...[".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs", ".py"].map((ext) => `${base}${ext}`), ...[".ts", ".tsx", ".js", ".jsx", ".py"].map((ext) => `${base}/index${ext}`), `${base}/__init__.py`];
-  const directMatch = candidates.find((candidate) => paths.has(candidate));
-  if (directMatch) return directMatch;
-  if (source.language !== "python" || relative) return undefined;
-  return [...paths].find((modulePath) => candidates.some((candidate) => modulePath.endsWith(`/${candidate}`)));
-}
-
 function metricFor(file: IndexedFile, fanIn: number, fanOut: number): ModuleMetric {
   const branchMatches = file.source.match(/\b(if|else if|for|while|case|catch|&&|\|\||\?)\b/g)?.length ?? 0;
   const complexity = Math.max(1, branchMatches + 1);
@@ -173,28 +141,8 @@ function metricFor(file: IndexedFile, fanIn: number, fanOut: number): ModuleMetr
   return { complexity, lines: file.lines, fanIn, fanOut, hotspotScore };
 }
 
-function fallbackSummary(file: IndexedFile, metric: ModuleMetric, dependencyNames: string[]): ModuleSummary {
-  const baseName = path.basename(file.path).replace(/\.(tsx?|jsx?|mjs|cjs|py)$/, "");
-  const purpose = baseName === "index" || baseName === "main" ? "Entry point that wires the module graph together." : `The ${baseName.replace(/[-_]/g, " ")} module.`;
-  const firstInterestingLine = Math.max(1, file.source.split(/\r?\n/).findIndex((line) => /\b(import|export|class|function|def|async)\b/.test(line)) + 1);
-  return {
-    modulePath: file.path,
-    purpose,
-    responsibilities: [
-      `Owns ${metric.lines} lines of ${file.language} implementation`,
-      dependencyNames.length ? `Coordinates ${dependencyNames.length} imported module${dependencyNames.length === 1 ? "" : "s"}` : "Provides a leaf implementation with no local imports"
-    ],
-    keyFlows: ["Read the exported functions and follow the highlighted dependency edges."],
-    dependencies: dependencyNames.slice(0, 8),
-    risks: metric.hotspotScore > 60 ? ["High combined complexity and coupling; worth a focused review."] : [],
-    confidence: "low",
-    generatedBy: "deterministic-fallback",
-    evidence: [{ filePath: file.path, startLine: firstInterestingLine, endLine: Math.min(file.lines, firstInterestingLine + 18), reason: "Module source anchor used for the deterministic explanation and metric context." }]
-  };
-}
-
 async function summarizeWithLlm(file: IndexedFile, metric: ModuleMetric, dependencyNames: string[]): Promise<ModuleSummary> {
-  const fallback = fallbackSummary(file, metric, dependencyNames);
+  const fallback = buildDeterministicModuleSummary(file, metric, dependencyNames);
   const apiKey = process.env.LLM_API_KEY ?? process.env.CKEY_API_KEY;
   if (!apiKey) return fallback;
   const model = configuredModel();
@@ -469,10 +417,18 @@ export async function analyzeRepository(input: { repositoryUrl: string; id: stri
     throw new Error("An LLM API key is required to analyze a repository and explain its Big Picture");
   }
   configuredModel();
+  if (!isFetchableRepositoryLocation(input.repositoryUrl)) {
+    throw new Error("Only https, git, ssh, and file repository locations can be analyzed");
+  }
   const workspace = await fs.mkdtemp(path.join(os.tmpdir(), "codebase-analyzer-"));
   try {
     onProgress("cloning", 12, "Cloning a detached snapshot");
-    await execFileAsync("git", ["-c", "http.followRedirects=false", "clone", "--depth", "1", "--quiet", input.repositoryUrl, workspace], { timeout: 120_000 });
+    // `--` keeps git from reading the repository location as an option, which
+    // would let a location like `--upload-pack=<command>` run that command.
+    await execFileAsync("git", ["-c", "http.followRedirects=false", "clone", "--depth", "1", "--quiet", "--", input.repositoryUrl, workspace], {
+      timeout: 120_000,
+      env: { ...process.env, GIT_TERMINAL_PROMPT: "0", GIT_ASKPASS: "", GCM_INTERACTIVE: "never" }
+    });
     const { stdout: sha } = await execFileAsync("git", ["-C", workspace, "rev-parse", "HEAD"], { timeout: 10_000 });
     const { stdout: branch } = await execFileAsync("git", ["-C", workspace, "branch", "--show-current"], { timeout: 10_000 });
 
@@ -483,13 +439,8 @@ export async function analyzeRepository(input: { repositoryUrl: string; id: stri
     const paths = new Set(files.map((file) => file.path));
 
     onProgress("graphing", 48, "Drawing the dependency graph");
-    const rawEdges: DependencyEdge[] = [];
-    for (const file of files) {
-      for (const imported of importsFor(file)) {
-        const target = resolveImport(file, imported.specifier, paths);
-        rawEdges.push({ source: file.path, target: target ?? imported.specifier, kind: target ? imported.kind : "unresolved", line: imported.line });
-      }
-    }
+    const goModule = projectContext.find((file) => file.path.toLowerCase() === "go.mod");
+    const rawEdges = buildDependencyEdges(files, { goModulePath: goModule ? readGoModulePath(goModule.source) : undefined });
     const inDegree = new Map<string, number>();
     const outDegree = new Map<string, number>();
     for (const edge of rawEdges) {
@@ -501,7 +452,7 @@ export async function analyzeRepository(input: { repositoryUrl: string; id: stri
     const modules: AnalyzedModule[] = files.map((file) => {
       const cluster = file.path.includes("/") ? file.path.split("/")[0] : "root";
       const metric = metricFor(file, inDegree.get(file.path) ?? 0, outDegree.get(file.path) ?? 0);
-      return { id: crypto.createHash("sha1").update(file.path).digest("hex").slice(0, 10), path: file.path, language: file.language, cluster, metric, summary: fallbackSummary(file, metric, []) };
+      return { id: crypto.createHash("sha1").update(file.path).digest("hex").slice(0, 10), path: file.path, language: file.language, cluster, metric, summary: buildDeterministicModuleSummary(file, metric, []) };
     });
     const moduleMap = new Map(modules.map((module) => [module.path, module]));
 
@@ -514,17 +465,33 @@ export async function analyzeRepository(input: { repositoryUrl: string; id: stri
 
     const configuredSummaryConcurrency = Number(process.env.LLM_CONCURRENCY ?? 4);
     const summaryConcurrency = Math.min(8, Math.max(1, Math.floor(configuredSummaryConcurrency) || 1));
-    onProgress("summarizing", 76, `Reading project behavior across ${files.length} source files`);
+    // Modules outside the budget keep their deterministic explanation, which the
+    // report labels as such. This bounds analysis cost and latency on large
+    // repositories without weakening the synthesis prompts, which read a
+    // smaller, identically ranked slice of modules.
+    const summaryBudget = resolveSummaryBudget(process.env.LLM_SUMMARY_BUDGET);
+    const budgeted = selectModulesForLlmSummary(modules, summaryBudget);
+    for (const file of files) {
+      if (budgeted.has(file.path)) continue;
+      const module = moduleMap.get(file.path)!;
+      module.summary = buildDeterministicModuleSummary(file, module.metric, dependenciesBySource.get(file.path) ?? []);
+    }
+
+    const budgetedFiles = files.filter((file) => budgeted.has(file.path));
+    const skipped = files.length - budgetedFiles.length;
+    onProgress("summarizing", 76, skipped
+      ? `Reading the ${budgetedFiles.length} most connected of ${files.length} source files`
+      : `Reading project behavior across ${files.length} source files`);
     let completedSummaries = 0;
     let lastSummaryProgress = 75;
-    await mapWithConcurrency(files, summaryConcurrency, async (file) => {
+    await mapWithConcurrency(budgetedFiles, summaryConcurrency, async (file) => {
       const module = moduleMap.get(file.path)!;
       const dependencies = dependenciesBySource.get(file.path) ?? [];
       module.summary = await summarizeWithLlm(file, module.metric, dependencies);
       completedSummaries += 1;
-      const summaryProgress = 76 + Math.floor((completedSummaries / files.length) * 17);
+      const summaryProgress = 76 + Math.floor((completedSummaries / budgetedFiles.length) * 17);
       if (summaryProgress > lastSummaryProgress) {
-        onProgress("summarizing", summaryProgress, `Read ${completedSummaries} of ${files.length} source files`);
+        onProgress("summarizing", summaryProgress, `Read ${completedSummaries} of ${budgetedFiles.length} source files`);
         lastSummaryProgress = summaryProgress;
       }
     });
@@ -551,6 +518,7 @@ export async function analyzeRepository(input: { repositoryUrl: string; id: stri
       modules,
       edges: rawEdges,
       clusters: [...new Set(modules.map((module) => module.cluster))],
+      graphCoverage: buildGraphCoverage(files, rawEdges),
       overview,
       diagram,
       systemDesign

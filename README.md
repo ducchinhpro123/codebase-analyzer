@@ -23,10 +23,29 @@ relationships explicitly.
 - Shareable, unlisted report URLs
 - Live analysis progress over server-sent events
 
-Repositories in any text-based programming language are supported, including
+Repositories in any text-based programming language are indexed, including
 mixed-language codebases and files with unfamiliar source extensions. An LLM
 API key is required for new analyses because the plain-language Big Picture and
 its Mermaid concept map are generated from an evidence-backed model reading.
+
+### Dependency graph coverage
+
+Every indexed file is read, scored, and explained. The dependency graph is built
+from imports, which are parsed per language:
+
+| Read | Languages |
+| --- | --- |
+| Imports parsed and resolved to repository files | TypeScript, JavaScript, Python, Go, Rust, Java, Kotlin, Scala, Groovy, C#, C, C++, Objective-C, Ruby, PHP, Elixir, Swift, Dart, Lua, Perl, shell, Vue, Svelte, Astro |
+| Indexed and explained, but contributing no edges | every other language |
+
+A language not in the first row still appears in the report with metrics and a
+module explanation; it simply adds no edges. The architecture map states the
+share of files its graph was built from, so a sparse graph reads as a limit of
+the analysis rather than a finding about the code.
+
+Imports are matched per language with comment and string awareness, not parsed
+into full syntax trees. Ordinary import, use, include, and require forms are
+read; imports produced by macros or code generation are not.
 
 ## Quick start
 
@@ -53,6 +72,7 @@ LLM_API_KEY=your-key-here
 LLM_BASE_URL=https://api.example.com/v1
 LLM_MODEL=your-model
 LLM_CONCURRENCY=4
+LLM_SUMMARY_BUDGET=120
 ```
 
 The model receives bounded repository context and returns the plain-language
@@ -60,6 +80,18 @@ project purpose, problem, outcome, user journey, concept map, and module
 summaries. Its output is validated before it enters a report; deterministic
 metrics and syntax relationships never depend on the model. The built-in sample
 report remains available without an API key.
+
+`LLM_SUMMARY_BUDGET` caps how many modules the model explains in one analysis.
+Modules are ranked by coupling and hotspot score — the same ranking the Big
+Picture, concept map, and system-design views use to choose their own context —
+so the modules those views read are always covered. Modules outside the budget
+keep their deterministic explanation, which the report labels as such. Lowering
+the budget makes large repositories cheaper and faster to analyze; raising it
+extends model-written explanations further down the module list.
+
+An analysis first reads the repository's current head commit without cloning it.
+If a report already exists for that exact commit, it is reused and its existing
+share URL is returned instead of re-cloning and re-reading the codebase.
 
 ## Operating modes
 

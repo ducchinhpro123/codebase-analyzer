@@ -11,6 +11,14 @@ export const demoReport: AnalysisReport = {
   languages: ["typescript", "python"],
   totals: { files: 42, lines: 12840, modules: 18, edges: 31 },
   clusters: ["app", "analyzer", "worker", "shared"],
+  graphCoverage: {
+    filesRead: 42,
+    filesWithImportSupport: 34,
+    languagesWithImportSupport: ["python", "typescript"],
+    languagesWithoutImportSupport: ["css", "json", "yaml"],
+    resolvedEdges: 27,
+    unresolvedEdges: 4
+  },
   overview: {
     summary: "Tracepath explains an unfamiliar software project in plain language. Paste a public GitHub link and it turns the repository into a visual report of what the project is for, how its main ideas connect, and where maintainers may need to be careful.",
     problem: "People evaluating or joining a software project often have to read thousands of unfamiliar files before they can understand what the project actually does or whether it is safe to change.",

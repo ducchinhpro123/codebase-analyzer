@@ -31,6 +31,8 @@ async function ensureSchema() {
       report JSONB NOT NULL,
       created_at TIMESTAMPTZ NOT NULL
     );
+    CREATE INDEX IF NOT EXISTS analysis_reports_repository_commit_idx
+      ON analysis_reports (repository_url, commit_sha, created_at DESC);
   `).then(() => undefined).catch((error) => {
     schemaReady = undefined;
     throw error;
@@ -79,6 +81,21 @@ export async function readJob(id: string) {
     const row = result.rows[0];
     if (!row) return undefined;
     return { id: row.id, repositoryUrl: row.repository_url, status: row.status, progress: row.progress, message: row.message, error: row.error ?? undefined, report: row.report ?? undefined, createdAt: new Date(row.created_at).toISOString() } as AnalysisJob;
+  } catch {
+    return undefined;
+  }
+}
+
+export async function readReportByCommit(repositoryUrl: string, commitSha: string) {
+  const database = getPool();
+  if (!database) return undefined;
+  try {
+    await ensureSchema();
+    const result = await database.query(
+      "SELECT report FROM analysis_reports WHERE repository_url=$1 AND commit_sha=$2 ORDER BY created_at DESC LIMIT 1",
+      [repositoryUrl, commitSha]
+    );
+    return (result.rows[0]?.report ?? undefined) as AnalysisReport | undefined;
   } catch {
     return undefined;
   }
